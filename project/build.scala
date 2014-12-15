@@ -50,7 +50,7 @@ object build extends Build {
   lazy val standardSettings: Seq[Sett] = Defaults.defaultSettings ++ sbtrelease.ReleasePlugin.releaseSettings ++ Seq[Sett](
     organization := "org.scalaz",
 
-    scalaVersion := "2.10.4",
+    scalaVersion := "2.11.4",
     crossScalaVersions := Seq("2.10.4", "2.11.2"),
     resolvers ++= (if (scalaVersion.value.endsWith("-SNAPSHOT")) List(Opts.resolver.sonatypeSnapshots) else Nil),
     scalacOptions ++= Seq(
@@ -180,6 +180,7 @@ object build extends Build {
     id = "core",
     base = file("core"),
     settings = standardSettings ++ buildInfoSettings ++ Seq[Sett](
+      libraryDependencies <+= (scalaVersion)("org.scala-lang" % "scala-reflect" % _),
       name := "scalaz-core",
       typeClasses := TypeClass.core,
       sourceGenerators in Compile <+= (sourceManaged in Compile) map {

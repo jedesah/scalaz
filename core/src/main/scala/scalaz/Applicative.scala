@@ -112,6 +112,10 @@ trait Applicative[F[_]] extends Apply[F] { self =>
   val applicativeSyntax = new scalaz.syntax.ApplicativeSyntax[F] { def F = Applicative.this }
 }
 
+import language.experimental.macros
+import scala.concurrent.Future
+import scala.reflect.runtime.universe._
+
 object Applicative {
   @inline def apply[F[_]](implicit F: Applicative[F]): Applicative[F] = F
 
@@ -120,4 +124,44 @@ object Applicative {
   implicit def monoidApplicative[M:Monoid]: Applicative[({type λ[α] = M})#λ] = Monoid[M].applicative
 
   ////
+}
+
+object IdiomBracket {
+  def apply[T](x: T): Option[T] = macro idiomBracket[T]
+
+  def extract[T](option: Option[T]): T = ??? // Should be removed by macro expansion
+
+  import scala.reflect.macros.Context
+
+  def idiomBracket[T: c.WeakTypeTag](c: Context)(x: c.Expr[T]): c.Expr[Option[T]] = {
+    import c.universe._
+    val result = transformAST(c.universe)(x.tree)
+    c.Expr[Option[T]](result)
+  }
+
+  def transformAST(u: scala.reflect.api.Universe)(tree: u.Tree): u.Tree = {
+    import u._
+    tree match {
+      case Apply(ident, args) => {
+        println(args.map(showRaw(_)))
+        val cleanedArgs = args.map {
+          // TODO: Find out how this pattern matching on the extract function can be made more robust
+          // TODO: Figure out how to use quasiquotes to make this easier to read (the commented out approach below does not work with Scala 2.11.4)
+          //case pq"IdiomBracket.extract[String]($actualArg)" => actualArg
+          case Apply(TypeApply(Select(Ident(name), TermName("extract")), List(TypeTree())), List(actualArg)) if name.toString == "IdiomBracket" => println(name); actualArg
+          case Apply(TypeApply(Select(Ident(name), TermName("extract")), List(TypeTree())), List(actualArg)) if name.toString == "scalaz.IdiomBracket" => println(name); actualArg
+          case Apply(Ident(TermName("extract")), List(actualArg)) => actualArg
+          case actualArg => actualArg
+        }
+        val partiallyAppliedIdent = ident match {
+          case Ident(name) => Ident(TermName(name.toString + "_"))
+        }
+        assert(cleanedArgs.length == 2)
+        println(cleanedArgs)
+        q"Applicative[Option].apply2(..$cleanedArgs)($ident)"
+        //q"${cleanedArgs(0)}.zip(${cleanedArgs(1)}).map{ case (a,b) => ${ident}(a,b)}"
+      }
+      case _ => throw new UnsupportedOperationException("Needs to be a simple expression")
+    }
+  }
 }

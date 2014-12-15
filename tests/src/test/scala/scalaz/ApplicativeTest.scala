@@ -3,6 +3,8 @@ package scalaz
 import org.scalacheck.{Prop, Gen}
 import org.scalacheck.Prop.forAll
 
+import scala.reflect.runtime.universe._
+
 object ApplicativeTest extends SpecLite {
 
   // In c44c206461fe, the functions `replicateM`, `replicateM_`, `filterM`
@@ -32,6 +34,32 @@ object ApplicativeTest extends SpecLite {
     // don't make `None` too likely
     def pred(n: Int) = if (n < 0 && n % 2 == 0) None else Some(n % 2 == 0)
     l.filterM(pred) must_===(filterM(l, pred))
+  }
+
+  "Idiom brackets" ! forAll { (a: Option[String], b: Option[String]) =>
+    import IdiomBracket.extract
+    def doThing(e: String, f: String) = e + f
+    val f = IdiomBracket(doThing(extract(a),extract(b)))
+    if (a.isDefined && b.isDefined)
+      f == Some(a.get + b.get)
+    else
+      f == None
+  }
+
+  "AST generation" in {
+    val ast = q"doThing(extract(a), extract(b))"
+    val transformed = IdiomBracket.transformAST(scala.reflect.runtime.universe)(ast)
+    val expected = q"Applicative[Option].apply2(a,b)(doThing)"
+    if(transformed equalsStructure expected) true else {println(showRaw(transformed)); println(showRaw(expected)); false}
+  }
+
+  "assumption" ! forAll { (a: Option[String], b: Option[String]) =>
+    def doThing(a: String, b: String) = a + b
+    val f = Applicative[Option].apply2(a,b)(doThing)
+    if (a.isDefined && b.isDefined)
+      f == Some(a.get + b.get)
+    else
+      f == None
   }
 
 }
