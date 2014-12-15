@@ -143,23 +143,23 @@ object IdiomBracket {
     import u._
     tree match {
       case Apply(ident, args) => {
-        println(args.map(showRaw(_)))
         val cleanedArgs = args.map {
           // TODO: Find out how this pattern matching on the extract function can be made more robust
           // TODO: Figure out how to use quasiquotes to make this easier to read (the commented out approach below does not work with Scala 2.11.4)
           //case pq"IdiomBracket.extract[String]($actualArg)" => actualArg
-          case Apply(TypeApply(Select(Ident(name), TermName("extract")), List(TypeTree())), List(actualArg)) if name.toString == "IdiomBracket" => println(name); actualArg
-          case Apply(TypeApply(Select(Ident(name), TermName("extract")), List(TypeTree())), List(actualArg)) if name.toString == "scalaz.IdiomBracket" => println(name); actualArg
+          case Apply(TypeApply(Select(Ident(name), TermName("extract")), List(TypeTree())), List(actualArg)) if name.toString == "IdiomBracket" => actualArg
+          case Apply(TypeApply(Select(Ident(name), TermName("extract")), List(TypeTree())), List(actualArg)) if name.toString == "scalaz.IdiomBracket" => actualArg
           case Apply(Ident(TermName("extract")), List(actualArg)) => actualArg
           case actualArg => actualArg
         }
         val partiallyAppliedIdent = ident match {
           case Ident(name) => Ident(TermName(name.toString + "_"))
         }
-        assert(cleanedArgs.length == 2)
-        println(cleanedArgs)
-        q"Applicative[Option].apply2(..$cleanedArgs)($ident)"
-        //q"${cleanedArgs(0)}.zip(${cleanedArgs(1)}).map{ case (a,b) => ${ident}(a,b)}"
+        val arity = cleanedArgs.length
+        assert(cleanedArgs.length <= 12, "scalaz does not define an apply13 or more")
+        val applyFunName = s"apply$arity"
+        val applyTerm = TermName(applyFunName)
+        q"Applicative[Option].$applyTerm(..$cleanedArgs)($ident)"
       }
       case _ => throw new UnsupportedOperationException("Needs to be a simple expression")
     }

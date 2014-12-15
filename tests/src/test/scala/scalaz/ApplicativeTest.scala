@@ -36,12 +36,22 @@ object ApplicativeTest extends SpecLite {
     l.filterM(pred) must_===(filterM(l, pred))
   }
 
-  "Idiom brackets" ! forAll { (a: Option[String], b: Option[String]) =>
+  "Idiom brackets with 2 params" ! forAll { (a: Option[String], b: Option[String]) =>
     import IdiomBracket.extract
     def doThing(e: String, f: String) = e + f
     val f = IdiomBracket(doThing(extract(a),extract(b)))
     if (a.isDefined && b.isDefined)
-      f == Some(a.get + b.get)
+      f == Some(doThing(a.get, b.get))
+    else
+      f == None
+  }
+
+  "Idiom brackets with 3 params" ! forAll { (a: Option[String], b: Option[String], c: Option[String]) =>
+    import IdiomBracket.extract
+    def doThing(e: String, f: String, h: String) = e + f + h
+    val f = IdiomBracket(doThing(extract(a),extract(b), extract(c)))
+    if (a.isDefined && b.isDefined && c.isDefined)
+      f == Some(doThing(a.get, b.get, c.get))
     else
       f == None
   }
