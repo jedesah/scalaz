@@ -150,7 +150,7 @@ object IdiomBracket {
           case Apply(TypeApply(Select(Ident(name), TermName("extract")), List(TypeTree())), List(actualArg)) if name.toString == "IdiomBracket" => actualArg
           case Apply(TypeApply(Select(Ident(name), TermName("extract")), List(TypeTree())), List(actualArg)) if name.toString == "scalaz.IdiomBracket" => actualArg
           case Apply(Ident(TermName("extract")), List(actualArg)) => actualArg
-          case actualArg => actualArg
+          case actualArg => q"Some($actualArg)"
         }
         val partiallyAppliedIdent = ident match {
           case Ident(name) => Ident(TermName(name.toString + "_"))

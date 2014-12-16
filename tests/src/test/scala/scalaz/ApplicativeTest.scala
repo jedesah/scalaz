@@ -56,6 +56,16 @@ object ApplicativeTest extends SpecLite {
       f == None
   }
 
+  "Idiom brackets with mixed params" ! forAll { (a: String, b: Option[String], c: Option[String]) =>
+    import IdiomBracket.extract
+    def doThing(e: String, f: String, h: String) = e + f + h
+    val f = IdiomBracket(doThing(a,extract(b), extract(c)))
+    if (b.isDefined && c.isDefined)
+      f == Some(doThing(a, b.get, c.get))
+    else
+      f == None
+  }
+
   "AST generation" in {
     val ast = q"doThing(extract(a), extract(b))"
     val transformed = IdiomBracket.transformAST(scala.reflect.runtime.universe)(ast)
