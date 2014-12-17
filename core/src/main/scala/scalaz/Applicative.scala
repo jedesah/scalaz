@@ -134,7 +134,6 @@ object IdiomBracket {
   import scala.reflect.macros.Context
 
   def idiomBracket[T: c.WeakTypeTag](c: Context)(x: c.Expr[T]): c.Expr[Option[T]] = {
-    import c.universe._
     val result = transformAST(c.universe)(x.tree)
     c.Expr[Option[T]](result)
   }
