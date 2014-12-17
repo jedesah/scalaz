@@ -84,11 +84,29 @@ object ApplicativeTest extends SpecLite {
       f == None
   }
 
+  "Idiom brackets with extract within argument" ! forAll { (a: Option[String], b: Option[String], c: Option[String]) =>
+    import IdiomBracket.extract
+    def doThing(e: String, f: String, h: String) = e + f + h
+    def otherThing(ff: String) = ff * 3
+    val f = IdiomBracket(doThing(otherThing(extract(a)),extract(b), extract(c)))
+    if (a.isDefined && b.isDefined && c.isDefined)
+      f == Some(doThing(otherThing(a.get), b.get, c.get))
+    else
+      f == None
+  }
+
   "AST generation" in {
     val ast = q"doThing(extract(a), extract(b))"
     val transformed = IdiomBracket.transformAST(scala.reflect.runtime.universe)(ast)
     val expected = q"Applicative[Option].apply2(a,b)(doThing)"
-    if(transformed equalsStructure expected) true else {println(showRaw(transformed)); println(showRaw(expected)); false}
+    if(transformed equalsStructure expected) true else {println(transformed);println(showRaw(transformed)); println(expected);println(showRaw(expected)); false}
+  }
+
+  "AST generation recursive" in {
+    val ast = q"doThing(otherThing(extract(a)),extract(b), extract(c))"
+    val transformed = IdiomBracket.transformAST(scala.reflect.runtime.universe)(ast)
+    val expected = q"Applicative[Option].apply3(Applicative[Option].map(a)(otherThing),b,c)(doThing)"
+    if(transformed equalsStructure expected) true else {println(transformed);println(showRaw(transformed)); println(expected);println(showRaw(expected)); false}
   }
 
   "assumption" ! forAll { (a: Option[String], b: Option[String]) =>
@@ -96,6 +114,16 @@ object ApplicativeTest extends SpecLite {
     val f = Applicative[Option].apply2(a,b)(doThing)
     if (a.isDefined && b.isDefined)
       f == Some(doThing(a.get,b.get))
+    else
+      f == None
+  }
+
+  "assumption recursive" ! forAll { (a: Option[String], b: Option[String], c: Option[String]) =>
+    def doThing(a: String, b: String, c: String) = a + b + c
+    def otherThing(ff: String) = ff * 3
+    val f = Applicative[Option].apply3(Applicative[Option].map(a)(otherThing),b,c)(doThing)
+    if (a.isDefined && b.isDefined && c.isDefined)
+      f == Some(doThing(otherThing(a.get),b.get, c.get))
     else
       f == None
   }

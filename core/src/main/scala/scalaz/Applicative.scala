@@ -141,10 +141,30 @@ object IdiomBracket {
 
   def transformAST(u: scala.reflect.api.Universe)(tree: u.Tree): u.Tree = {
     import u._
+    def transformR(tree: u.Tree): u.Tree = tree match {
+        case Apply(ident, args) => {
+          ident match {
+            case Ident(name) => {
+              val cleanedArgs = cleanArgs(args)
+              val applyTerm = getApplyTerm(cleanedArgs.length)
+              q"Applicative[Option].$applyTerm(..$cleanedArgs)($ident)"
+            }
+            case Select(ident, methodName) => {
+              val argsAfterRewrite = ident :: args
+              val cleanedArgs = cleanArgs(argsAfterRewrite)
+              val applyTerm = getApplyTerm(argsAfterRewrite.length)
+              val methodNameTerm = methodName.toTermName
+              q"Applicative[Option].$applyTerm(..$cleanedArgs)(_.$methodNameTerm(_,_))"
+            }
+          }
+        }
+        case _ => tree
+    }
 
     def getApplyTerm(arity: Int) = {
       assert(arity <= 12, "scalaz does not define an apply13 or more")
-      val applyFunName = s"apply$arity"
+      val applyFunName = if (arity == 1) "map"
+      else s"apply$arity"
       TermName(applyFunName)
     }
 
@@ -155,27 +175,19 @@ object IdiomBracket {
       case Apply(TypeApply(Select(Ident(name), TermName("extract")), List(TypeTree())), List(actualArg)) if name.toString == "IdiomBracket" => actualArg
       case Apply(TypeApply(Select(Ident(name), TermName("extract")), List(TypeTree())), List(actualArg)) if name.toString == "scalaz.IdiomBracket" => actualArg
       case Apply(Ident(TermName("extract")), List(actualArg)) => actualArg
-      case actualArg => q"Some($actualArg)"
+      case normalArg => {
+        val newArg = transformR(normalArg)
+        // If the argument has not undergone a transformation, then lift the computation in order
+        // to fit into the new AST
+        if (newArg equalsStructure normalArg) q"Some($normalArg)"
+        // If it has been transformed than it has already been lifter in sort
+        // because of the transformation required to remove the extract
+        else newArg
+      }
     }
 
     tree match {
-      case Apply(ident, args) => {
-        ident match {
-          case Ident(name) => {
-            val partiallyAppliedIdent = Ident(TermName(name.toString + "_"))
-            val cleanedArgs = cleanArgs(args)
-            val applyTerm = getApplyTerm(cleanedArgs.length)
-            q"Applicative[Option].$applyTerm(..$cleanedArgs)($ident)"
-          }
-          case Select(ident, methodName) => {
-            val argsAfterRewrite = ident :: args
-            val cleanedArgs = cleanArgs(argsAfterRewrite)
-            val applyTerm = getApplyTerm(argsAfterRewrite.length)
-            val methodNameTerm = methodName.toTermName
-            q"Applicative[Option].$applyTerm(..$cleanedArgs)(_.$methodNameTerm(_,_))"
-          }
-        }
-      }
+      case Apply(_,_) => transformR(tree)
       case _ => throw new UnsupportedOperationException("Needs to be a simple expression")
     }
   }
