@@ -95,6 +95,18 @@ object ApplicativeTest extends SpecLite {
       f == None
   }
 
+  "Idiom brackets with deeply nested extract within argument" ! forAll { (a: Option[String], b: Option[String], c: Option[String]) =>
+    import IdiomBracket.extract
+    def doThing(e: String, f: String, h: String) = e + f + h
+    def otherThing(ff: String) = ff * 3
+    def firstThis(gg: String) = gg.take(1)
+    val f = IdiomBracket(doThing(otherThing(firstThis(extract(a))),extract(b), extract(c)))
+    if (a.isDefined && b.isDefined && c.isDefined)
+      f == Some(doThing(otherThing(firstThis(a.get)), b.get, c.get))
+    else
+      f == None
+  }
+
   "AST generation" in {
     val ast = q"doThing(extract(a), extract(b))"
     val transformed = IdiomBracket.transformAST(scala.reflect.runtime.universe)(ast)
