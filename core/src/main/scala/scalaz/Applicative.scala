@@ -158,6 +158,16 @@ object IdiomBracket {
             }
           }
         }
+        case Block(exprs, finalExpr) => {
+          val newExprs = (exprs :+ finalExpr).foldLeft[(List[String], List[u.Tree])]((Nil, Nil)) { (accu, expr) =>
+            val (names, exprs) = accu
+            expr match {
+              case ValDef(mods, name, tpt, rhs) => (name.toString :: names, exprs :+ ValDef(mods, name, tpt, transformR(addExtract(rhs, names))))
+              case _ => (names, exprs :+ transformR(addExtract(expr, names)))
+            }
+          }._2
+          Block(newExprs.init, newExprs.last)
+        }
         case _ => tree
     }
 
@@ -166,6 +176,11 @@ object IdiomBracket {
       val applyFunName = if (arity == 1) "map"
       else s"apply$arity"
       TermName(applyFunName)
+    }
+
+    def addExtract(expr: u.Tree, names: List[String]): u.Tree = {
+      // TODO: Add extract to identifiers of names
+      expr
     }
 
     def cleanArgs(args: List[u.Tree]) = args.map {
@@ -188,7 +203,8 @@ object IdiomBracket {
 
     tree match {
       case Apply(_,_) => transformR(tree)
-      case _ => throw new UnsupportedOperationException("Needs to be a simple expression")
+      case Block(_) => transformR(tree)
+      case _ => throw new UnsupportedOperationException("Needs to be a simple expression or a block statement")
     }
   }
 }

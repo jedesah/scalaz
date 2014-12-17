@@ -107,6 +107,19 @@ object ApplicativeTest extends SpecLite {
       f == None
   }
 
+  /*"Idiom brackets with block" ! forAll { (a: Option[String]) =>
+    import IdiomBracket.extract
+    def otherThing(ff: String) = ff * 3
+    val f = IdiomBracket {
+      val aa = otherThing(extract(a))
+      otherThing(aa)
+    }
+    if (a.isDefined)
+      f == Some(otherThing(otherThing(a.get)))
+    else
+      f == None
+  }*/
+
   "AST generation" in {
     val ast = q"doThing(extract(a), extract(b))"
     val transformed = IdiomBracket.transformAST(scala.reflect.runtime.universe)(ast)
@@ -144,6 +157,16 @@ object ApplicativeTest extends SpecLite {
     val f = Applicative[Option].apply3(Some(a),b,c)(_.indexOf(_,_))
     if (b.isDefined && c.isDefined)
       f == Some(a.indexOf(b.get, c.get))
+    else
+      f == None
+  }
+
+  "assumption block" ! forAll { (a: Option[String]) =>
+    def otherThing(ff: String) = ff * 3
+    val aa = Applicative[Option].map(a)(otherThing)
+    val f = Applicative[Option].map(aa)(otherThing)
+    if (a.isDefined)
+      f == Some(otherThing(otherThing(a.get)))
     else
       f == None
   }
