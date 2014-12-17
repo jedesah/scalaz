@@ -66,6 +66,24 @@ object ApplicativeTest extends SpecLite {
       f == None
   }
 
+  "Idiom brackets with method invocation" ! forAll { (a: String, b: Option[Int], c: Option[Int]) =>
+    import IdiomBracket.extract
+    val f = IdiomBracket(a.indexOf(extract(b), extract(c)))
+    if (b.isDefined && c.isDefined)
+      f == Some(a.indexOf(b.get, c.get))
+    else
+      f == None
+  }
+
+  "Idiom brackets with method invocation different" ! forAll { (a: Option[String], b: Int, c: Option[Int]) =>
+    import IdiomBracket.extract
+    val f = IdiomBracket(extract(a).indexOf(b, extract(c)))
+    if (a.isDefined && c.isDefined)
+      f == Some(a.get.indexOf(b, c.get))
+    else
+      f == None
+  }
+
   "AST generation" in {
     val ast = q"doThing(extract(a), extract(b))"
     val transformed = IdiomBracket.transformAST(scala.reflect.runtime.universe)(ast)
@@ -77,7 +95,15 @@ object ApplicativeTest extends SpecLite {
     def doThing(a: String, b: String) = a + b
     val f = Applicative[Option].apply2(a,b)(doThing)
     if (a.isDefined && b.isDefined)
-      f == Some(a.get + b.get)
+      f == Some(doThing(a.get,b.get))
+    else
+      f == None
+  }
+
+  "assumption method call" ! forAll { (a: String, b: Option[Int], c: Option[Int]) =>
+    val f = Applicative[Option].apply3(Some(a),b,c)(_.indexOf(_,_))
+    if (b.isDefined && c.isDefined)
+      f == Some(a.indexOf(b.get, c.get))
     else
       f == None
   }
