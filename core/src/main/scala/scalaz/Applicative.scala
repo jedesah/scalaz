@@ -131,7 +131,7 @@ object IdiomBracket {
 
   def extract[T](option: Option[T]): T = ??? // Should be removed by macro expansion
 
-  import scala.reflect.macros.Context
+  import scala.reflect.macros.blackbox.Context
 
   def idiomBracket[T: c.WeakTypeTag](c: Context)(x: c.Expr[T]): c.Expr[Option[T]] = {
     val result = transformAST(c.universe)(x.tree)
@@ -161,7 +161,11 @@ object IdiomBracket {
           val newExprs = (exprs :+ finalExpr).foldLeft[(List[String], List[u.Tree])]((Nil, Nil)) { (accu, expr) =>
             val (names, exprs) = accu
             expr match {
-              case ValDef(mods, name, tpt, rhs) => (name.toString :: names, exprs :+ ValDef(mods, name, tpt, transformR(addExtract(rhs, names))))
+              // We need to remember the name of the value definition so that we can add extract methods later so that the right thing happens
+              case ValDef(mods, name, tpt, rhs) => (name.toString :: names, exprs :+ ValDef(mods, name, TypeTree(), transformR(addExtract(rhs, names))))
+              // If it's just an identifier, let's leave it as is.
+              case ident: Ident => (names, exprs :+ Ident(TermName(ident.name.toString)))
+              // Anything else, we need to add extracts to identifiers of transformed `ValDef`s because we lifted the type of the symbol they refer to.
               case _ => (names, exprs :+ transformR(addExtract(expr, names)))
             }
           }._2
@@ -178,8 +182,16 @@ object IdiomBracket {
     }
 
     def addExtract(expr: u.Tree, names: List[String]): u.Tree = {
-      // TODO: Add extract to identifiers of names
-      expr
+      object AddExtract extends Transformer {
+        override def transform(tree: u.Tree): u.Tree = tree match {
+          case ident@Ident(name) => {
+            val untypedIdent = Ident(TermName(name.toString))
+            if (names.contains(name.toString)) q"extract($untypedIdent)" else ident
+          }
+          case _ => super.transform(tree)
+        }
+      }
+      AddExtract.transform(expr)
     }
 
     def cleanArgs(args: List[u.Tree]) = args.map {
