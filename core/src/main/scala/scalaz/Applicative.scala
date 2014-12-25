@@ -171,7 +171,7 @@ object IdiomBracket {
     }
 
     def getApplyTerm(arity: Int) = {
-      assert(arity <= 12, "scalaz does not define an apply13 or more")
+      assert(arity <= 12, "scalaz does not define an apply13 or more which is necessary of our rewrite to work. Reformat your code to avoid functions receiving more than 12 parameters.")
       val applyFunName = if (arity == 1) "map"
       else s"apply$arity"
       TermName(applyFunName)
