@@ -255,7 +255,8 @@ object build extends Build {
     settings = standardSettings ++Seq[Sett](
       name := "scalaz-tests",
       publishArtifact := false,
-      libraryDependencies += "org.scalacheck" %% "scalacheck" % scalaCheckVersion % "test"
+      libraryDependencies += "org.scalacheck" %% "scalacheck" % scalaCheckVersion % "test",
+      libraryDependencies <+= (scalaVersion)("org.scala-lang" % "scala-compiler" % _ % "test")
     )
   )
 

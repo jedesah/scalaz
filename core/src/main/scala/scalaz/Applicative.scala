@@ -113,6 +113,7 @@ trait Applicative[F[_]] extends Apply[F] { self =>
 }
 
 import language.experimental.macros
+import scala.annotation.compileTimeOnly
 import scala.concurrent.Future
 import scala.reflect.runtime.universe._
 
@@ -129,6 +130,7 @@ object Applicative {
 object IdiomBracket {
   def apply[T](x: T): Option[T] = macro idiomBracket[T]
 
+  @compileTimeOnly("`extract` must be enclosed in an `IdiomBracket`")
   def extract[T](option: Option[T]): T = ??? // Should be removed by macro expansion
 
   import scala.reflect.macros.blackbox.Context

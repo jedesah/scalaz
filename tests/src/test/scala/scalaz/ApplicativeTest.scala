@@ -26,6 +26,9 @@ object ApplicativeTest extends SpecLite {
       case h :: t => Monad[F].bind(f(h))(b => Monad[F].map(filterM(t, f))(t => if (b) h :: t else t))
     }
 
+  def doThing(a: String) = a * 3
+  val a = Some("hello")
+
   "replicateM is the same" ! forAll { (fa: Option[Int]) => forAll(Gen.choose(0, 100)) { n =>
     fa.replicateM(n) must_===(replicateM(n, fa))
   }}
@@ -156,6 +159,18 @@ object ApplicativeTest extends SpecLite {
       f == Some(otherThing(otherThing(a.get)))
     else
       f == None
+  }
+
+  "extract does not compile on it's own" in {
+    import scala.reflect.runtime.{currentMirror => cm}
+    import scala.reflect.runtime.universe._
+    import scala.tools.reflect.ToolBox
+    val ast = q"""
+                import scalaz._
+                ApplicativeTest.doThing(IdiomBracket.extract(ApplicativeTest.a))
+              """
+    val tb = cm.mkToolBox()
+    tb.compile(ast).mustThrowA[scala.tools.reflect.ToolBoxError]
   }
 
   "AST generation" in {
