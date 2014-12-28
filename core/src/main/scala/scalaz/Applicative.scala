@@ -133,7 +133,23 @@ object IdiomBracket {
   @compileTimeOnly("`extract` must be enclosed in an `IdiomBracket`")
   def extract[T](option: Option[T]): T = ??? // Should be removed by macro expansion
 
+  def debug(x: Any): Unit = macro debugImpl
+
+  object auto {
+    @compileTimeOnly("`extract` must be enclosed in an `IdiomBracket`")
+    implicit def extract[T](option: Option[T]): T = ??? // Should be removed by macro expansion
+  }
+
   import scala.reflect.macros.blackbox.Context
+
+  def debugImpl(c: Context)(x: c.Expr[Any]): c.Expr[Unit] = {
+    import c.universe._
+    println(show(x.tree))
+    println(showRaw(x.tree))
+    val message = Literal(Constant(show(x.tree) + ": "))
+    val result = q"""println($message + (${x.tree}))"""
+    c.Expr[Unit](result)
+  }
 
   def idiomBracket[T: c.WeakTypeTag](c: Context)(x: c.Expr[T]): c.Expr[Option[T]] = {
     val result = transformAST(c.universe)(x.tree)
@@ -151,11 +167,19 @@ object IdiomBracket {
               q"Applicative[Option].$applyTerm(..$cleanedArgs)($ident)"
             }
             case Select(ident, methodName) => {
-              val argsAfterRewrite = ident :: args
-              val cleanedArgs = cleanArgs(argsAfterRewrite)
-              val applyTerm = getApplyTerm(argsAfterRewrite.length)
-              val methodNameTerm = methodName.toTermName
-              q"Applicative[Option].$applyTerm(..$cleanedArgs)(_.$methodNameTerm(_,_))"
+              if (extractsArePresent(ident)) {
+                val argsAfterRewrite = ident :: args
+                val cleanedArgs = cleanArgs(argsAfterRewrite)
+                val applyTerm = getApplyTerm(argsAfterRewrite.length)
+                val methodNameTerm = methodName.toTermName
+                q"Applicative[Option].$applyTerm(..$cleanedArgs)(_.$methodNameTerm(_,_))"
+              }
+              else {
+                val cleanedArgs = cleanArgs(args)
+                val applyTerm = getApplyTerm(args.length)
+                val methodNameTerm = methodName.toTermName
+                q"Applicative[Option].$applyTerm(..$cleanedArgs)($ident.$methodNameTerm)"
+              }
             }
           }
         }
@@ -188,7 +212,7 @@ object IdiomBracket {
         override def transform(tree: u.Tree): u.Tree = tree match {
           case ident@Ident(name) => {
             val untypedIdent = Ident(TermName(name.toString))
-            if (names.contains(name.toString)) q"extract($untypedIdent)" else ident
+            if (names.contains(name.toString)) q"scalaz.IdiomBracket.extract($untypedIdent)" else ident
           }
           case _ => super.transform(tree)
         }
@@ -196,23 +220,38 @@ object IdiomBracket {
       AddExtract.transform(expr)
     }
 
-    def cleanArgs(args: List[u.Tree]) = args.map {
-      // TODO: Find out how this pattern matching on the extract function can be made more robust
-      // TODO: Figure out how to use quasiquotes to make this easier to read (the commented out approach below does not work with Scala 2.11.4)
-      //case pq"IdiomBracket.extract[String]($actualArg)" => actualArg
-      case Apply(TypeApply(Select(Ident(name), TermName("extract")), List(TypeTree())), List(actualArg)) if name.toString == "IdiomBracket" => actualArg
-      case Apply(TypeApply(Select(Ident(name), TermName("extract")), List(TypeTree())), List(actualArg)) if name.toString == "scalaz.IdiomBracket" => actualArg
-      case Apply(Ident(TermName("extract")), List(actualArg)) => actualArg
-      case normalArg => {
-        val newArg = transformR(normalArg)
-        // If the argument has not undergone a transformation, then lift the computation in order
-        // to fit into the new AST
-        if (newArg equalsStructure normalArg) q"Some($normalArg)"
-        // If it has been transformed than it has already been lifter in sort
-        // because of the transformation required to remove the extract
-        else newArg
+    def extractsArePresent(expr: u.Tree): Boolean = {
+      var result = false
+      object FindExtract extends Traverser {
+        override def traverse(tree: u.Tree): Unit =
+          if(isExtractFunction(tree)) result = true
+          else super.traverse(tree)
+      }
+      FindExtract.traverse(expr)
+      result
+    }
+
+    def isExtractFunction(tree: u.Tree): Boolean = {
+      val extractMethodNames = List("scalaz.IdiomBracket.extract", "scalaz.IdiomBracket.auto.extract")
+      tree match {
+        case extract: Apply if extractMethodNames.contains(extract.symbol.fullName) => true
+        case extract: Apply if extract.symbol == NoSymbol => true
+        case _ => false
       }
     }
+
+    def cleanArgs(args: List[u.Tree]) = args.map {
+        case extract if isExtractFunction(extract) => extract.asInstanceOf[Apply].args(0)
+        case normalArg => {
+          val newArg = transformR(normalArg)
+          // If the argument has not undergone a transformation, then lift the computation in order
+          // to fit into the new AST
+          if (newArg equalsStructure normalArg) q"Some($normalArg)"
+          // If it has been transformed than it has already been lifter in sort
+          // because of the transformation required to remove the extract
+          else newArg
+        }
+      }
 
     tree match {
       case Apply(_,_) => transformR(tree)

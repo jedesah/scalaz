@@ -4,6 +4,8 @@ import org.scalacheck.{Prop, Gen}
 import org.scalacheck.Prop.forAll
 
 import scala.reflect.runtime.universe._
+import scala.reflect.runtime.{currentMirror => cm}
+import scala.tools.reflect.ToolBox
 
 object ApplicativeTest extends SpecLite {
 
@@ -27,7 +29,12 @@ object ApplicativeTest extends SpecLite {
     }
 
   def doThing(a: String) = a * 3
+  def doThing(a: String, b: String) = a + b
+  def doThing(a: String, b: String, c: String) = a + b + c
+  def otherThing(a: String) = a * 2
   val a = Some("hello")
+  val b = Some("hello1")
+  val c = Some("hello2")
 
   "replicateM is the same" ! forAll { (fa: Option[Int]) => forAll(Gen.choose(0, 100)) { n =>
     fa.replicateM(n) must_===(replicateM(n, fa))
@@ -43,6 +50,16 @@ object ApplicativeTest extends SpecLite {
     import IdiomBracket.extract
     def doThing(e: String, f: String) = e + f
     val f = IdiomBracket(doThing(extract(a),extract(b)))
+    if (a.isDefined && b.isDefined)
+      f == Some(doThing(a.get, b.get))
+    else
+      f == None
+  }
+
+  "Idiom brackets with implicit extract" ! forAll { (a: Option[String], b: Option[String]) =>
+    import IdiomBracket.auto.extract
+    def doThing(e: String, f: String) = e + f
+    val f = IdiomBracket(doThing(a,b))
     if (a.isDefined && b.isDefined)
       f == Some(doThing(a.get, b.get))
     else
@@ -162,9 +179,6 @@ object ApplicativeTest extends SpecLite {
   }
 
   "extract does not compile on it's own" in {
-    import scala.reflect.runtime.{currentMirror => cm}
-    import scala.reflect.runtime.universe._
-    import scala.tools.reflect.ToolBox
     val ast = q"""
                 import scalaz._
                 ApplicativeTest.doThing(IdiomBracket.extract(ApplicativeTest.a))
@@ -174,19 +188,34 @@ object ApplicativeTest extends SpecLite {
   }
 
   "AST generation" in {
-    val ast = q"doThing(extract(a), extract(b))"
-    val transformed = IdiomBracket.transformAST(scala.reflect.runtime.universe)(ast)
-    val expected = q"Applicative[Option].apply2(a,b)(doThing)"
+    val ast = q"""
+                import scalaz._
+                ApplicativeTest.doThing(IdiomBracket.extract(ApplicativeTest.a), IdiomBracket.extract(ApplicativeTest.b))
+              """
+    val tb = cm.mkToolBox()
+    val transformed = tb.untypecheck(IdiomBracket.transformAST(scala.reflect.runtime.universe)(tb.typecheck(ast)))
+    val expected = q"""
+                    import scalaz._
+                    Applicative[Option].apply2(scalaz.ApplicativeTest.a,scalaz.ApplicativeTest.b)(scalaz.ApplicativeTest.doThing)
+                   """
     if(transformed equalsStructure expected) true else {println(transformed);println(showRaw(transformed)); println(expected);println(showRaw(expected)); false}
   }
 
   "AST generation recursive" in {
-    val ast = q"doThing(otherThing(extract(a)),extract(b), extract(c))"
-    val transformed = IdiomBracket.transformAST(scala.reflect.runtime.universe)(ast)
-    val expected = q"Applicative[Option].apply3(Applicative[Option].map(a)(otherThing),b,c)(doThing)"
+    val ast = q"""
+                import scalaz._
+                ApplicativeTest.doThing(ApplicativeTest.otherThing(IdiomBracket.extract(ApplicativeTest.a)),IdiomBracket.extract(ApplicativeTest.b), IdiomBracket.extract(ApplicativeTest.c))
+              """
+    val tb = cm.mkToolBox()
+    val transformed = tb.untypecheck(IdiomBracket.transformAST(scala.reflect.runtime.universe)(tb.typecheck(ast)))
+    val expected = q"""
+                    import scalaz._
+                    Applicative[Option].apply3(Applicative[Option].map(scalaz.ApplicativeTest.a)(scalaz.ApplicativeTest.otherThing),scalaz.ApplicativeTest.b,scalaz.ApplicativeTest.c)(scalaz.ApplicativeTest.doThing)
+                  """
     if(transformed equalsStructure expected) true else {println(transformed);println(showRaw(transformed)); println(expected);println(showRaw(expected)); false}
   }
 
+  // TODO: Update this test to be typechecked and maybe understand better why this one works and the other ones didn't
   "AST generation with block" in {
     val ast = q"{val aa = otherThing(extract(a)); otherThing(aa)}"
     val transformed = IdiomBracket.transformAST(scala.reflect.runtime.universe)(ast)
