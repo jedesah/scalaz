@@ -56,6 +56,16 @@ object ApplicativeTest extends SpecLite {
       f == None
   }
 
+  "Idiom brackets with renamed import" ! forAll { (a: Option[String], b: Option[String]) =>
+    import IdiomBracket.{extract => extractt}
+    def doThing(e: String, f: String) = e + f
+    val f = IdiomBracket(doThing(extractt(a),extractt(b)))
+    if (a.isDefined && b.isDefined)
+      f == Some(doThing(a.get, b.get))
+    else
+      f == None
+  }
+
   "Idiom brackets with implicit extract" ! forAll { (a: Option[String], b: Option[String]) =>
     import IdiomBracket.auto.extract
     def doThing(e: String, f: String) = e + f
