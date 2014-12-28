@@ -159,30 +159,20 @@ object IdiomBracket {
   def transformAST(u: scala.reflect.api.Universe)(tree: u.Tree): u.Tree = {
     import u._
     def transformR(tree: u.Tree): u.Tree = tree match {
-        case Apply(ident, args) => {
-          ident match {
-            case Ident(name) => {
+        case Apply(ref, args) =>
+          if (!extractsArePresent(ref)) {
               val cleanedArgs = cleanArgs(args)
               val applyTerm = getApplyTerm(cleanedArgs.length)
-              q"Applicative[Option].$applyTerm(..$cleanedArgs)($ident)"
-            }
-            case Select(ident, methodName) => {
-              if (extractsArePresent(ident)) {
-                val argsAfterRewrite = ident :: args
-                val cleanedArgs = cleanArgs(argsAfterRewrite)
-                val applyTerm = getApplyTerm(argsAfterRewrite.length)
-                val methodNameTerm = methodName.toTermName
-                q"Applicative[Option].$applyTerm(..$cleanedArgs)(_.$methodNameTerm(_,_))"
-              }
-              else {
-                val cleanedArgs = cleanArgs(args)
-                val applyTerm = getApplyTerm(args.length)
-                val methodNameTerm = methodName.toTermName
-                q"Applicative[Option].$applyTerm(..$cleanedArgs)($ident.$methodNameTerm)"
-              }
-            }
+              q"Applicative[Option].$applyTerm(..$cleanedArgs)($ref)"
           }
-        }
+          else {
+            val Select(exprRef, methodName) = ref
+            val argsAfterRewrite = exprRef :: args
+            val cleanedArgs = cleanArgs(argsAfterRewrite)
+            val applyTerm = getApplyTerm(argsAfterRewrite.length)
+            val methodNameTerm = methodName.toTermName
+            q"Applicative[Option].$applyTerm(..$cleanedArgs)(_.$methodNameTerm(_,_))"
+          }
         case Block(exprs, finalExpr) => {
           val newExprs = (exprs :+ finalExpr).foldLeft[(List[String], List[u.Tree])]((Nil, Nil)) { (accu, expr) =>
             val (names, exprs) = accu
