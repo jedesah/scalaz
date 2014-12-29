@@ -228,7 +228,7 @@ object IdiomBracket {
       }
     }
 
-    def cleanArgs(args: List[u.Tree]) = args.map {
+    def cleanArgs(args: List[u.Tree]): List[u.Tree] = args.map {
         case extract if isExtractFunction(extract) => extract.asInstanceOf[Apply].args(0)
         case normalArg => {
           val newArg = transformR(normalArg)
