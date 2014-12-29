@@ -114,8 +114,6 @@ trait Applicative[F[_]] extends Apply[F] { self =>
 
 import language.experimental.macros
 import scala.annotation.compileTimeOnly
-import scala.concurrent.Future
-import scala.reflect.runtime.universe._
 
 object Applicative {
   @inline def apply[F[_]](implicit F: Applicative[F]): Applicative[F] = F
