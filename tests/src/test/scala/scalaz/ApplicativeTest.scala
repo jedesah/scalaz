@@ -35,6 +35,7 @@ object ApplicativeTest extends SpecLite {
   val a = Some("hello")
   val b = Some("hello1")
   val c = Some("hello2")
+  val a1 = Some(Some("hello"))
 
   "replicateM is the same" ! forAll { (fa: Option[Int]) => forAll(Gen.choose(0, 100)) { n =>
     fa.replicateM(n) must_===(replicateM(n, fa))
@@ -188,6 +189,21 @@ object ApplicativeTest extends SpecLite {
       f == None
   }
 
+  "Idiom brackets with double extract" ! forAll { (a: Option[Option[String]]) =>
+    import IdiomBracket.extract
+    def otherThing(ff: String) = ff * 3
+    val f = IdiomBracket.apply2{
+      val aa = otherThing(extract(extract(a)))
+      otherThing(aa)
+    }
+    if (a.isDefined && a.get.isDefined)
+      f == Some(Some(otherThing(otherThing(a.get.get))))
+    else if(a.isDefined)
+      f == Some(None)
+    else
+      f == None
+  }
+
   "extract does not compile on it's own" in {
     val ast = q"""
                 import scalaz._
@@ -203,7 +219,7 @@ object ApplicativeTest extends SpecLite {
                 ApplicativeTest.doThing(IdiomBracket.extract(ApplicativeTest.a), IdiomBracket.extract(ApplicativeTest.b))
               """
     val tb = cm.mkToolBox()
-    val transformed = tb.untypecheck(IdiomBracket.transformAST(scala.reflect.runtime.universe)(tb.typecheck(ast)))
+    val transformed = tb.untypecheck(IdiomBracket.transformAST(scala.reflect.runtime.universe, null)(tb.typecheck(ast)).get)
     val expected = q"""
                     import scalaz._
                     Applicative[Option].apply2(scalaz.ApplicativeTest.a,scalaz.ApplicativeTest.b)(scalaz.ApplicativeTest.doThing)
@@ -217,7 +233,7 @@ object ApplicativeTest extends SpecLite {
                 ApplicativeTest.doThing(ApplicativeTest.otherThing(IdiomBracket.extract(ApplicativeTest.a)),IdiomBracket.extract(ApplicativeTest.b), IdiomBracket.extract(ApplicativeTest.c))
               """
     val tb = cm.mkToolBox()
-    val transformed = tb.untypecheck(IdiomBracket.transformAST(scala.reflect.runtime.universe)(tb.typecheck(ast)))
+    val transformed = tb.untypecheck(IdiomBracket.transformAST(scala.reflect.runtime.universe, null)(tb.typecheck(ast)).get)
     val expected = q"""
                     import scalaz._
                     Applicative[Option].apply3(Applicative[Option].map(scalaz.ApplicativeTest.a)(scalaz.ApplicativeTest.otherThing),scalaz.ApplicativeTest.b,scalaz.ApplicativeTest.c)(scalaz.ApplicativeTest.doThing)
@@ -225,12 +241,45 @@ object ApplicativeTest extends SpecLite {
     if(transformed equalsStructure expected) true else {println(transformed);println(showRaw(transformed)); println(expected);println(showRaw(expected)); false}
   }
 
-  // TODO: Update this test to be typechecked and maybe understand better why this one works and the other ones didn't
   "AST generation with block" in {
-    val ast = q"{val aa = otherThing(extract(a)); otherThing(aa)}"
-    val transformed = IdiomBracket.transformAST(scala.reflect.runtime.universe)(ast)
-    val expected = q"{val aa = Applicative[Option].map(a)(otherThing); Applicative[Option].map(aa)(otherThing)}"
+    val ast = q"""
+                import scalaz.IdiomBracket.extract
+                import scalaz.ApplicativeTest._
+                {val aa = otherThing(extract(a)); otherThing(aa)}
+              """
+    val tb = cm.mkToolBox()
+    val transformed = tb.untypecheck(IdiomBracket.transformAST(scala.reflect.runtime.universe, null)(tb.typecheck(ast)).get)
+    val expected = q"""
+                    import scalaz.IdiomBracket.extract
+                    import scalaz.ApplicativeTest._
+                    {val aa = Applicative[Option].map(scalaz.ApplicativeTest.a)(scalaz.ApplicativeTest.otherThing); Applicative[Option].map(aa)(scalaz.ApplicativeTest.otherThing)}
+                   """
     if(transformed equalsStructure expected) true else {println(transformed);println(showRaw(transformed)); println(expected);println(showRaw(expected)); false}
+  }
+
+  "AST generation with double extract" in {
+    val ast = q"""
+                import scalaz.IdiomBracket.extract
+                import scalaz.ApplicativeTest._
+                val aa = otherThing(extract(extract(a1)))
+                otherThing(aa)
+              """
+    val tb = cm.mkToolBox()
+    object NameGenerator {
+      var number = 0
+      def freshName() = {
+        number += 1
+        "x" + number
+      }
+    }
+    val rawTransformed = tb.untypecheck(IdiomBracket.transformAST(scala.reflect.runtime.universe, () => NameGenerator.freshName())(tb.typecheck(ast)).get)
+    val minusTwoImports = rawTransformed.children.drop(2)
+    val transformed = Block(minusTwoImports.init, minusTwoImports.last)
+    val expected = q"""
+                    val aa = Applicative[Option].map(scalaz.ApplicativeTest.a1)(x1 => Applicative[Option].map(x1)(scalaz.ApplicativeTest.otherThing))
+                    Applicative[Option].map(aa)(x2 => Applicative[Option].map(x2)(scalaz.ApplicativeTest.otherThing))
+                   """
+    if(transformed.toString == expected.toString) true else {println(transformed);println(showRaw(transformed)); println(expected);println(showRaw(expected)); false}
   }
 
   "assumption" ! forAll { (a: Option[String], b: Option[String]) =>

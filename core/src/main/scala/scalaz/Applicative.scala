@@ -127,6 +127,7 @@ object Applicative {
 
 object IdiomBracket {
   def apply[T](x: T): Option[T] = macro idiomBracket[T]
+  def apply2[T](x: T): Option[Option[T]] = macro idiomBracket2[T]
 
   @compileTimeOnly("`extract` must be enclosed in an `IdiomBracket`")
   def extract[T](option: Option[T]): T = ??? // Should be removed by macro expansion
@@ -150,42 +151,74 @@ object IdiomBracket {
   }
 
   def idiomBracket[T: c.WeakTypeTag](c: Context)(x: c.Expr[T]): c.Expr[Option[T]] = {
-    val result = transformAST(c.universe)(x.tree)
-    c.Expr[Option[T]](result)
+    import c.universe._
+    val result = transformAST(c.universe, () => c.freshName())(x.tree)
+    if (!result.isDefined) c.warning(c.enclosingPosition, "IdiomBracket merely lifted expression, there is a probably a better more explicit way of achieving the same result")
+    c.Expr[Option[T]](result.getOrElse(q"Some($x.tree)"))
   }
 
-  def transformAST(u: scala.reflect.api.Universe)(tree: u.Tree): u.Tree = {
+  def idiomBracket2[T: c.WeakTypeTag](c: Context)(x: c.Expr[T]): c.Expr[Option[Option[T]]] = {
+    import c.universe._
+    val result = transformAST(c.universe, () => c.freshName())(x.tree)
+    if (!result.isDefined) c.warning(c.enclosingPosition, "IdiomBracket merely lifted expression, there is a probably a better more explicit way of achieving the same result")
+    c.Expr[Option[Option[T]]](result.getOrElse(q"Some(Some($x.tree))"))
+  }
+
+  /**
+    *
+    * @param u The universe of the Trees. Required to operate under current Scala reflection architecture. Trees cannot
+    *          exist without a universe.
+    * @param freshName Function that generates fresh names for use in the AST transformation
+    * @param tree Tree to transform
+    * @return Some(Tree) if the tree was transformed or none if it was not transformed
+    */
+  def transformAST(u: scala.reflect.api.Universe, freshName: () => String)(tree: u.Tree): Option[u.Tree] = {
     import u._
-    def transformR(tree: u.Tree): u.Tree = tree match {
+    def transformR(tree: u.Tree): (u.Tree, Int) = tree match {
         case Apply(ref, args) =>
-          if (!extractsArePresent(ref)) {
-              val cleanedArgs = cleanArgs(args)
-              val applyTerm = getApplyTerm(cleanedArgs.length)
-              q"Applicative[Option].$applyTerm(..$cleanedArgs)($ref)"
-          }
-          else {
+          val (ref1, args1) = if (!extractsArePresent(ref)) { (ref, args) } else {
             val Select(exprRef, methodName) = ref
-            val argsAfterRewrite = exprRef :: args
-            val cleanedArgs = cleanArgs(argsAfterRewrite)
-            val applyTerm = getApplyTerm(argsAfterRewrite.length)
             val methodNameTerm = methodName.toTermName
-            q"Applicative[Option].$applyTerm(..$cleanedArgs)(_.$methodNameTerm(_,_))"
+            (q"_.$methodNameTerm(_, _)", exprRef :: args)
+          }
+          val cleanedArgs = cleanArgs(args1)
+          val applyTerm = getApplyTerm(cleanedArgs.length)
+          if (cleanedArgs.forall(!isExtractFunction(_))) (q"Applicative[Option].$applyTerm(..$cleanedArgs)($ref1)", 1)
+          else {
+            val names: List[String] = (0 until cleanedArgs.size).map(a => freshName()).toList
+            val transformedArgs = cleanedArgs.zip(names).map { case (arg, name) =>
+              val ident = Ident(TermName(name))
+              if (extractsArePresent(arg)) ident
+              else q"Some($ident)"
+            }
+            val inner = createFunction(q"Applicative[Option].$applyTerm(..$transformedArgs)($ref1)", names)
+            val reCleanedArgs = cleanArgs(cleanedArgs)
+            (q"Applicative[Option].$applyTerm(..$reCleanedArgs)($inner)", 2)
           }
         case Block(exprs, finalExpr) => {
-          val newExprs = (exprs :+ finalExpr).foldLeft[(List[String], List[u.Tree])]((Nil, Nil)) { (accu, expr) =>
+          var arityLastTransform: Int = 0
+          val newExprs = (exprs :+ finalExpr).foldLeft[(Map[String, Int], List[u.Tree])]((Map(), Nil)) { (accu, expr) =>
             val (names, exprs) = accu
             expr match {
               // We need to remember the name of the value definition so that we can add extract methods later so that the right thing happens
-              case ValDef(mods, name, tpt, rhs) => (name.toString :: names, exprs :+ ValDef(mods, name, TypeTree(), transformR(addExtract(rhs, names))))
-              // If it's just an identifier, let's leave it as is.
-              case ident: Ident => (names, exprs :+ Ident(TermName(ident.name.toString)))
+              case ValDef(mods, name, tpt, rhs) =>
+                val (tRHS, transformArity) = transformR(addExtractR(rhs, names))
+                arityLastTransform = transformArity
+                (names + (name.toString -> transformArity), exprs :+ ValDef(mods, name, TypeTree(), tRHS))
+              // If it's just an identifier, let's leave it as is but reconstruct it so that it looses it's type.
+              case ident: Ident =>
+                arityLastTransform = names(ident.name.toString)
+                (names, exprs :+ Ident(TermName(ident.name.toString)))
               // Anything else, we need to add extracts to identifiers of transformed `ValDef`s because we lifted the type of the symbol they refer to.
-              case _ => (names, exprs :+ transformR(addExtract(expr, names)))
+              case _ =>
+                val (transformed, transformArity) = transformR(addExtractR(expr, names))
+                arityLastTransform = transformArity
+                (names, exprs :+ transformed)
             }
           }._2
-          Block(newExprs.init, newExprs.last)
+          (Block(newExprs.init, newExprs.last), arityLastTransform)
         }
-        case _ => tree
+        case _ => (tree, 0)
     }
 
     def getApplyTerm(arity: Int) = {
@@ -195,17 +228,28 @@ object IdiomBracket {
       TermName(applyFunName)
     }
 
-    def addExtract(expr: u.Tree, names: List[String]): u.Tree = {
+    def createFunction(rhs: u.Tree, args: List[String]) = {
+      val lhs = args.map( name => ValDef(Modifiers(Flag.PARAM | Flag.SYNTHETIC), TermName(name), TypeTree(), EmptyTree))
+      Function(lhs, rhs)
+    }
+
+    def addExtractR(expr: u.Tree, names: Map[String, Int]): u.Tree = {
       object AddExtract extends Transformer {
         override def transform(tree: u.Tree): u.Tree = tree match {
           case ident@Ident(name) => {
             val untypedIdent = Ident(TermName(name.toString))
-            if (names.contains(name.toString)) q"scalaz.IdiomBracket.extract($untypedIdent)" else ident
+            if (names.keys.toList.contains(name.toString))
+              (0 until names(name.toString)).foldLeft[u.Tree](untypedIdent)((tree, _) => addExtract(tree))
+            else ident
           }
           case _ => super.transform(tree)
         }
       }
       AddExtract.transform(expr)
+    }
+
+    def addExtract(expr: u.Tree): u.Tree = {
+      q"scalaz.IdiomBracket.extract($expr)"
     }
 
     def extractsArePresent(expr: u.Tree): Boolean = {
@@ -223,7 +267,7 @@ object IdiomBracket {
       val extractMethodNames = List("scalaz.IdiomBracket.extract", "scalaz.IdiomBracket.auto.extract")
       tree match {
         case extract: Apply if extractMethodNames.contains(extract.symbol.fullName) => true
-        case extract: Apply if extract.symbol == NoSymbol => true
+        case q"scalaz.IdiomBracket.extract($_)" => true
         case _ => false
       }
     }
@@ -231,20 +275,21 @@ object IdiomBracket {
     def cleanArgs(args: List[u.Tree]): List[u.Tree] = args.map {
         case extract if isExtractFunction(extract) => extract.asInstanceOf[Apply].args(0)
         case normalArg => {
-          val newArg = transformR(normalArg)
+          val (newArg, transformArity) = transformR(normalArg)
           // If the argument has not undergone a transformation, then lift the computation in order
           // to fit into the new AST
-          if (newArg equalsStructure normalArg) q"Some($normalArg)"
+          if (transformArity == 0) q"Some($normalArg)"
           // If it has been transformed than it has already been lifter in sort
           // because of the transformation required to remove the extract
           else newArg
         }
       }
 
-    tree match {
+    val (result, transformArity) = tree match {
       case Apply(_,_) => transformR(tree)
       case Block(_) => transformR(tree)
       case _ => throw new UnsupportedOperationException("Needs to be a simple expression or a block statement")
     }
+    if (transformArity == 0) None else Some(result)
   }
 }
