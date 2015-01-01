@@ -115,6 +115,15 @@ object ApplicativeTest extends SpecLite {
       f == None
   }
 
+  "Idiom brackets with complex method invocation" ! forAll { (a: Option[String], b: Int, c: Option[Int], d: Option[String]) =>
+    import IdiomBracket.extract
+    val f = IdiomBracket(doThing(extract(a), extract(d)).indexOf(b, extract(c)))
+    if (a.isDefined && c.isDefined && d.isDefined)
+      f == Some(doThing(a.get, d.get).indexOf(b, c.get))
+    else
+      f == None
+  }
+
   "Idiom brackets with extract within argument" ! forAll { (a: Option[String], b: Option[String], c: Option[String]) =>
     import IdiomBracket.extract
     def doThing(e: String, f: String, h: String) = e + f + h
