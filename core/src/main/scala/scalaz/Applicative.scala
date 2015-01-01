@@ -179,13 +179,13 @@ object IdiomBracket {
           val (ref1, args1) = if (!extractsArePresent(ref)) { (ref, args) } else {
             val Select(exprRef, methodName) = ref
             val methodNameTerm = methodName.toTermName
-            (q"_.$methodNameTerm(_, _)", exprRef :: args)
+            (createMethod(methodName, args.size, freshName), exprRef :: args)
           }
           val cleanedArgs = cleanArgs(args1)
           val applyTerm = getApplyTerm(cleanedArgs.length)
           if (cleanedArgs.forall(!isExtractFunction(_))) (q"Applicative[Option].$applyTerm(..$cleanedArgs)($ref1)", 1)
           else {
-            val names: List[String] = (0 until cleanedArgs.size).map(a => freshName()).toList
+            val names: List[String] = List.fill(cleanedArgs.size)(freshName())
             val transformedArgs = cleanedArgs.zip(names).map { case (arg, name) =>
               val ident = Ident(TermName(name))
               if (extractsArePresent(arg)) ident
@@ -230,6 +230,14 @@ object IdiomBracket {
 
     def createFunction(rhs: u.Tree, args: List[String]) = {
       val lhs = args.map( name => ValDef(Modifiers(Flag.PARAM | Flag.SYNTHETIC), TermName(name), TypeTree(), EmptyTree))
+      Function(lhs, rhs)
+    }
+
+    def createMethod(methodName: u.Name, nArgs: Int, freshName: () => String) = {
+      val names = List.fill(nArgs + 1)(freshName())
+      val lhs = names.map( name => ValDef(Modifiers(Flag.PARAM | Flag.SYNTHETIC), TermName(name), TypeTree(), EmptyTree))
+      val args = names.map(name => Ident(TermName(name)))
+      val rhs = Apply(Select(args.head, methodName), args.tail)
       Function(lhs, rhs)
     }
 

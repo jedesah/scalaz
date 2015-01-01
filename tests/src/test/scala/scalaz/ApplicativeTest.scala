@@ -37,6 +37,14 @@ object ApplicativeTest extends SpecLite {
   val c = Some("hello2")
   val a1 = Some(Some("hello"))
 
+  class NameGenerator {
+    var number = 0
+    def freshName() = {
+      number += 1
+      "x" + number
+    }
+  }
+
   "replicateM is the same" ! forAll { (fa: Option[Int]) => forAll(Gen.choose(0, 100)) { n =>
     fa.replicateM(n) must_===(replicateM(n, fa))
   }}
@@ -109,6 +117,15 @@ object ApplicativeTest extends SpecLite {
   "Idiom brackets with method invocation different" ! forAll { (a: Option[String], b: Int, c: Option[Int]) =>
     import IdiomBracket.extract
     val f = IdiomBracket(extract(a).indexOf(b, extract(c)))
+    if (a.isDefined && c.isDefined)
+      f == Some(a.get.indexOf(b, c.get))
+    else
+      f == None
+  }
+
+  "Idiom brackets with really complex method invocation" ! forAll { (a: Option[String], b: Int, c: Option[Int]) =>
+    import IdiomBracket.extract
+    val f = IdiomBracket(doThing(extract(a), extract(c).toString).indexOf(b, extract(c)))
     if (a.isDefined && c.isDefined)
       f == Some(a.get.indexOf(b, c.get))
     else
@@ -213,6 +230,24 @@ object ApplicativeTest extends SpecLite {
       f == None
   }
 
+  /*"Idiom bracket like SIP-22 example" ! forAll { (optionDOY: Option[String]) =>
+    import IdiomBracket.extract
+
+    val date = """(\d+)/(\d+)""".r
+    case class Ok(message: String)
+    case class NotFound(message: String)
+    def nameOfMonth(num: Int): Option[String] = None
+
+    IdiomBracket {
+      extract(optionDOY) match {
+        case date(month, day) =>
+          Ok(s"It’s ${extract(nameOfMonth(month.toInt))}!")
+        case _ =>
+          NotFound("Not a date, mate!")
+      }
+    }
+  }*/
+
   "extract does not compile on it's own" in {
     val ast = q"""
                 import scalaz._
@@ -234,6 +269,32 @@ object ApplicativeTest extends SpecLite {
                     Applicative[Option].apply2(scalaz.ApplicativeTest.a,scalaz.ApplicativeTest.b)(scalaz.ApplicativeTest.doThing)
                    """
     if(transformed equalsStructure expected) true else {println(transformed);println(showRaw(transformed)); println(expected);println(showRaw(expected)); false}
+  }
+
+  "AST generation complex method invocation" in {
+    //IdiomBracket(doThing(extract(a), extract(c).toString).indexOf(b, extract(c)))
+    val ast = q"""
+                import scalaz._
+                val a: Option[String] = ???
+                val b: Int = ???
+                val c: Option[Int] = ???
+                ApplicativeTest.doThing(IdiomBracket.extract(a), IdiomBracket.extract(c).toString).indexOf(b, IdiomBracket.extract(c))
+              """
+    val tb = cm.mkToolBox()
+    val testAST = tb.typecheck(ast).children.last
+    val nameGen = new NameGenerator
+    val transformed = tb.untypecheck(IdiomBracket.transformAST(scala.reflect.runtime.universe, () => nameGen.freshName())(testAST).get)
+    val expected = q"""
+                    Applicative[Option].apply3(
+                      Applicative[Option].apply2(
+                        a,
+                        Applicative[Option].map(c)(x4 => x4.toString())
+                      )(scalaz.ApplicativeTest.doThing),
+                      Some(b),
+                      c
+                    )((x1, x2, x3) => x1.indexOf(x2,x3))
+                   """
+    if(transformed.toString equals expected.toString) true else {println("TRANSFORMED PRETTY:\n" + transformed);println("EXPECTED PRETTY:\n" + expected);println("TRANSFORMED RAW:\n" + showRaw(transformed));println("EXPECTED RAW:\n" + showRaw(expected)); false}
   }
 
   "AST generation recursive" in {
@@ -274,14 +335,8 @@ object ApplicativeTest extends SpecLite {
                 otherThing(aa)
               """
     val tb = cm.mkToolBox()
-    object NameGenerator {
-      var number = 0
-      def freshName() = {
-        number += 1
-        "x" + number
-      }
-    }
-    val rawTransformed = tb.untypecheck(IdiomBracket.transformAST(scala.reflect.runtime.universe, () => NameGenerator.freshName())(tb.typecheck(ast)).get)
+    val nameGen = new NameGenerator
+    val rawTransformed = tb.untypecheck(IdiomBracket.transformAST(scala.reflect.runtime.universe, () => nameGen.freshName())(tb.typecheck(ast)).get)
     val minusTwoImports = rawTransformed.children.drop(2)
     val transformed = Block(minusTwoImports.init, minusTwoImports.last)
     val expected = q"""
