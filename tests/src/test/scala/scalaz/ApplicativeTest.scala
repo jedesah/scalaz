@@ -230,6 +230,23 @@ object ApplicativeTest extends SpecLite {
       f == None
   }
 
+  "Idiom brackets match with extract in lhs" ! forAll { (a: Option[String]) =>
+    import IdiomBracket.extract
+    val f = IdiomBracket {
+      extract(a) match {
+        case "hello" => "h"
+        case _ => "e"
+      }
+    }
+    if (a.isDefined)
+      f == Some(a.get match {
+        case "hello" => "h"
+        case _ => "e"
+      })
+    else
+      f == None
+  }
+
   /*"Idiom bracket like SIP-22 example" ! forAll { (optionDOY: Option[String]) =>
     import IdiomBracket.extract
 
@@ -344,6 +361,23 @@ object ApplicativeTest extends SpecLite {
                     Applicative[Option].map(aa)(x2 => Applicative[Option].map(x2)(scalaz.ApplicativeTest.otherThing))
                    """
     if(transformed.toString == expected.toString) true else {println(transformed);println(showRaw(transformed)); println(expected);println(showRaw(expected)); false}
+  }
+
+  "AST generation match with extract in lhs" in {
+
+    val ast = q"""
+                import scalaz.IdiomBracket.extract
+                import scalaz.ApplicativeTest._
+                extract(a) match { case "hello" => "h" }
+              """
+    val tb = cm.mkToolBox()
+    val transformed = tb.untypecheck(IdiomBracket.transformAST(scala.reflect.runtime.universe, null)(tb.typecheck(ast)).get)
+    val expected = q"""
+                    import scalaz.IdiomBracket.extract
+                    import scalaz.ApplicativeTest._
+                    Applicative[Option].map(scalaz.ApplicativeTest.a){ case "hello" => "h" }
+                   """
+    if(transformed equalsStructure expected) true else {println(transformed);println(showRaw(transformed)); println(expected);println(showRaw(expected)); false}
   }
 
   "assumption" ! forAll { (a: Option[String], b: Option[String]) =>
