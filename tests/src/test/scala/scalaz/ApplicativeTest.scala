@@ -45,6 +45,16 @@ object ApplicativeTest extends SpecLite {
     }
   }
 
+  def compareAndPrintIfDifferent(actual: reflect.runtime.universe.Tree, expected: reflect.runtime.universe.Tree) =
+    if (actual equalsStructure expected) true
+    else {
+      println("ACTUAL PRETTY:\n" + actual)
+      println("EXPECTED PRETTY:\n" + expected)
+      println("ACTUAL RAW:\n" + showRaw(actual))
+      println("EXPECTED RAW:\n" + showRaw(expected))
+      false
+    }
+
   "replicateM is the same" ! forAll { (fa: Option[Int]) => forAll(Gen.choose(0, 100)) { n =>
     fa.replicateM(n) must_===(replicateM(n, fa))
   }}
@@ -247,6 +257,35 @@ object ApplicativeTest extends SpecLite {
       f == None
   }
 
+  /*"Idiom brackets match with extract in case statement" ! forAll { (a: Option[String], b: Option[String]) =>
+    import IdiomBracket.extract
+    val f = IdiomBracket {
+      val bb = extract(b)
+      extract(a) match {
+        case bb => "h"
+        case _ => "e"
+      }
+    }
+    if (a.isDefined)
+      f == Some(a.get match {
+        case "hello" => "h"
+        case _ => "e"
+      })
+    else
+      f == None
+  }*/
+
+  "Idiom brackets if statement" ! forAll { (a: Option[String]) =>
+    import IdiomBracket.extract
+    val f = IdiomBracket {
+      if (extract(a).length == 5) 10 else 20
+    }
+    if (a.isDefined)
+      f == Some(if (a.get == 5) 10 else 20)
+    else
+      f == None
+  }
+
   /*"Idiom bracket like SIP-22 example" ! forAll { (optionDOY: Option[String]) =>
     import IdiomBracket.extract
 
@@ -285,7 +324,7 @@ object ApplicativeTest extends SpecLite {
                     import scalaz._
                     Applicative[Option].apply2(scalaz.ApplicativeTest.a,scalaz.ApplicativeTest.b)(scalaz.ApplicativeTest.doThing)
                    """
-    if(transformed equalsStructure expected) true else {println(transformed);println(showRaw(transformed)); println(expected);println(showRaw(expected)); false}
+    compareAndPrintIfDifferent(transformed, expected)
   }
 
   "AST generation complex method invocation" in {
@@ -325,7 +364,7 @@ object ApplicativeTest extends SpecLite {
                     import scalaz._
                     Applicative[Option].apply3(Applicative[Option].map(scalaz.ApplicativeTest.a)(scalaz.ApplicativeTest.otherThing),scalaz.ApplicativeTest.b,scalaz.ApplicativeTest.c)(scalaz.ApplicativeTest.doThing)
                   """
-    if(transformed equalsStructure expected) true else {println(transformed);println(showRaw(transformed)); println(expected);println(showRaw(expected)); false}
+    compareAndPrintIfDifferent(transformed, expected)
   }
 
   "AST generation with block" in {
@@ -341,7 +380,7 @@ object ApplicativeTest extends SpecLite {
                     import scalaz.ApplicativeTest._
                     {val aa = Applicative[Option].map(scalaz.ApplicativeTest.a)(scalaz.ApplicativeTest.otherThing); Applicative[Option].map(aa)(scalaz.ApplicativeTest.otherThing)}
                    """
-    if(transformed equalsStructure expected) true else {println(transformed);println(showRaw(transformed)); println(expected);println(showRaw(expected)); false}
+    compareAndPrintIfDifferent(transformed, expected)
   }
 
   "AST generation with double extract" in {
@@ -364,7 +403,6 @@ object ApplicativeTest extends SpecLite {
   }
 
   "AST generation match with extract in lhs" in {
-
     val ast = q"""
                 import scalaz.IdiomBracket.extract
                 import scalaz.ApplicativeTest._
@@ -377,8 +415,74 @@ object ApplicativeTest extends SpecLite {
                     import scalaz.ApplicativeTest._
                     Applicative[Option].map(scalaz.ApplicativeTest.a){ case "hello" => "h" }
                    """
-    if(transformed equalsStructure expected) true else {println(transformed);println(showRaw(transformed)); println(expected);println(showRaw(expected)); false}
+    compareAndPrintIfDifferent(transformed, expected)
   }
+
+  /*"AST generation match with extract in case pattern" in {
+    val ast = q"""
+                import scalaz.IdiomBracket.extract
+                import scalaz.ApplicativeTest._
+                val bb = extract(b)
+                extract(a) match {
+                  case bb => "h"
+                  case _ => "e"
+                }
+              """
+    val tb = cm.mkToolBox()
+    val transformed = tb.untypecheck(IdiomBracket.transformAST(scala.reflect.runtime.universe, null)(tb.typecheck(ast)).get)
+    val expected = q"""
+                    import scalaz.IdiomBracket.extract
+                    import scalaz.ApplicativeTest._
+                    val bb = b
+                    a map {
+                      case b if b.map(_ == a).getOrElse(false) => "h"
+                      case _ => "e"
+                    }
+                   """
+    compareAndPrintIfDifferent(transformed, expected)
+  }*/
+
+  /*"AST generation if statement" in {
+    val ast = q"""
+                import scalaz.IdiomBracket.extract
+                val a: Option[String] = ???
+                if (extract(a).length == 5) 10 else 20
+              """
+    val tb = cm.mkToolBox()
+    val nameGen = new NameGenerator
+    val lastLine = tb.typecheck(ast).children.last
+    val transformed = tb.untypecheck(IdiomBracket.transformAST(scala.reflect.runtime.universe, () => nameGen.freshName())(lastLine).get)
+    val expected = q"""
+                    Applicative[Option].map(
+                      Applicative[Option].map(a)(_.length == 5),
+                      Some(10),
+                      Some(20)
+                    )(if (_) _ else _)
+                   """
+    compareAndPrintIfDifferent(transformed, expected)
+  }*/
+
+  /*"AST generation if statement complex" in {
+    val ast = q"""
+                import scalaz.IdiomBracket.extract
+                val a: Option[String] = ???
+                val b: Option[String] = ???
+                if (extract(a).length == 5) extract(b) else "hello"
+              """
+    val tb = cm.mkToolBox()
+    val lastLine = tb.typecheck(ast).children.last
+    val nameGen = new NameGenerator
+    val transformed = tb.untypecheck(IdiomBracket.transformAST(scala.reflect.runtime.universe, () => nameGen.freshName())(lastLine).get)
+    val expected = q"""
+                    Applicative[Option].map(
+                      Applicative[Option].map(a)(_.length == 5),
+                      b,
+                      Some("hello")
+                    )
+                    (if (_) _ else _)
+                   """
+    compareAndPrintIfDifferent(transformed, expected)
+  }*/
 
   "assumption" ! forAll { (a: Option[String], b: Option[String]) =>
     def doThing(a: String, b: String) = a + b

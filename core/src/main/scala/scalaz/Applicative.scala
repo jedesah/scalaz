@@ -228,6 +228,9 @@ object IdiomBracket {
           val (transExpr, transformArity) = transformR(expr)
           (q"Applicative[Option].map($transExpr){ case ..$newCases}", Math.max(transformArity, arities.max))
         }
+      case If(expr, trueCase, falseCase) =>
+        val cleanParts = cleanArgs(List(expr, trueCase, falseCase))
+        (q"Applicative[Option].apply3(..$cleanParts)(if(_) _ else _)", 1)
       case _ => (tree, 0)
     }
 
