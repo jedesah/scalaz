@@ -222,12 +222,21 @@ object IdiomBracket {
         (Block(newExprs.init, newExprs.last), arityLastTransform)
       }
       case Match(expr, cases) =>
-        val (newCases, arities) = cases.map(transformR(_)).unzip
-        if (!extractsArePresent(expr)) (Match(expr, newCases.asInstanceOf[List[u.CaseDef]]), arities.max)
-        else {
-          val (transExpr, transformArity) = transformR(expr)
-          (q"Applicative[Option].map($transExpr){ case ..$newCases}", Math.max(transformArity, arities.max))
-        }
+        val caseArgs = cases.map {
+          case cq"_ => $x1" => List(x1)
+          case cq" $x1 => $x2" => List(x1,x2)
+        }.flatten
+        val args = cleanArgs(expr :: caseArgs)
+        val applyTerm = getApplyTerm(args.size)
+        val names = List.fill(args.size)(freshName())
+        val terms = names.map(TermName(_))
+        val otherTermsIterator = terms.tail.toIterator
+        val tCases = cases.map {
+          case cq"_ => $x1" => cq"_ => ${otherTermsIterator.next()}"
+          case cq" $x1 => $x2" => cq"`${otherTermsIterator.next()}` => ${otherTermsIterator.next()}"
+        }.toList
+        val function = createFunction(q"${terms(0)} match { case ..$tCases}", names)
+        (q"Applicative[Option].$applyTerm(..$args)($function)", 1)
       case If(expr, trueCase, falseCase) =>
         val cleanParts = cleanArgs(List(expr, trueCase, falseCase))
         (q"Applicative[Option].apply3(..$cleanParts)(if(_) _ else _)", 1)
@@ -242,7 +251,7 @@ object IdiomBracket {
     }
 
     def createFunction(rhs: u.Tree, args: List[String]) = {
-      val lhs = args.map( name => ValDef(Modifiers(Flag.PARAM | Flag.SYNTHETIC), TermName(name), TypeTree(), EmptyTree))
+      val lhs = args.map( name => ValDef(Modifiers(Flag.PARAM), TermName(name), TypeTree(), EmptyTree))
       Function(lhs, rhs)
     }
 
