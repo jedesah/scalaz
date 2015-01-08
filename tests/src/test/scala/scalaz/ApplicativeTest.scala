@@ -454,16 +454,15 @@ object ApplicativeTest extends SpecLite {
   }
 
   "AST generation interpolated string" in {
-    val tb = cm.mkToolBox()
-    val ast = tb.parse("""
+    val ast = q"""
                 import scalaz.IdiomBracket.extract
                 val a: Option[String] = ???
-                s"It's ${extract(a)}!"
-              """)
+                s"It's $${extract(a)}!"
+              """
     val transformed = transformLast(ast)
-    val expected = tb.parse("""
+    val expected = q"""
                        Applicative[Option].map(a)(((x1) => scala.StringContext.apply("It\'s ", "!").s(x1)))
-                    """)
+                    """
     compareAndPrintIfDifferent(transformed, expected, compareString = true)
   }
 
