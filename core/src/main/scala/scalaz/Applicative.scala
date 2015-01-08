@@ -178,7 +178,10 @@ object IdiomBracket {
       case fun: Apply if isExtractFunction(fun) => (fun.args(0), 1)
       case Apply(ref, args) =>
         val (ref1, args1) = if (!extractsArePresent(ref)) {
-          (ref, args)
+          ref match {
+            case Select(exprRef, methodName) => (createMethodWithLHS(methodName, exprRef, args.size, freshName), args)
+            case _ => (ref, args)
+          }
         } else {
           val Select(exprRef, methodName) = ref
           (createMethod(methodName, args.size, freshName), exprRef :: args)
@@ -262,6 +265,14 @@ object IdiomBracket {
       Function(lhs, rhs)
     }
 
+    def createMethodWithLHS(methodName: u.Name, select: u.Tree, nArgs: Int, freshName: () => String) = {
+      val names = List.fill(nArgs)(freshName())
+      val lhs = names.map( name => ValDef(Modifiers(Flag.PARAM | Flag.SYNTHETIC), TermName(name), TypeTree(), EmptyTree))
+      val args = names.map(name => Ident(TermName(name)))
+      val rhs = Apply(Select(select, methodName), args)
+      Function(lhs, rhs)
+    }
+
     def addExtractR(expr: u.Tree, names: Map[String, Int]): u.Tree = {
       object AddExtract extends Transformer {
         override def transform(tree: u.Tree): u.Tree = tree match {
@@ -295,7 +306,7 @@ object IdiomBracket {
     def isExtractFunction(tree: u.Tree): Boolean = {
       val extractMethodNames = List("scalaz.IdiomBracket.extract", "scalaz.IdiomBracket.auto.extract")
       tree match {
-        case extract if extractMethodNames.contains(extract.symbol.fullName) => true
+        case extract if extract.symbol != null && extractMethodNames.contains(extract.symbol.fullName) => true
         case q"scalaz.IdiomBracket.extract($_)" => true
         case _ => false
       }
