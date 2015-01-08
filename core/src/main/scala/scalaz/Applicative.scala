@@ -181,7 +181,6 @@ object IdiomBracket {
           (ref, args)
         } else {
           val Select(exprRef, methodName) = ref
-          val methodNameTerm = methodName.toTermName
           (createMethod(methodName, args.size, freshName), exprRef :: args)
         }
         val cleanedArgs = cleanArgs(args1)
