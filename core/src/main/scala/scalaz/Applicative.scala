@@ -129,6 +129,8 @@ object IdiomBracket {
   def apply[T](x: T): Option[T] = macro idiomBracket[T]
   def apply2[T](x: T): Option[Option[T]] = macro idiomBracket2[T]
 
+  def control[T](x: T): Option[T] = macro controlImpl[T]
+
   @compileTimeOnly("`extract` must be enclosed in an `IdiomBracket`")
   def extract[T](option: Option[T]): T = ??? // Should be removed by macro expansion
 
@@ -154,7 +156,16 @@ object IdiomBracket {
     import c.universe._
     val result = transformAST(c.universe, () => c.freshName())(x.tree)
     if (!result.isDefined) c.warning(c.enclosingPosition, "IdiomBracket merely lifted expression, there is a probably a better more explicit way of achieving the same result")
-    c.Expr[Option[T]](result.getOrElse(q"Some($x.tree)"))
+    c.Expr[Option[T]](result.getOrElse(q"Some(${x.tree})"))
+  }
+
+  def controlImpl[T: c.WeakTypeTag](c: Context)(x: c.Expr[T]): c.Expr[Option[T]] = {
+    import c.universe._
+    val result = x.tree match {
+      case Match(expr, cases) => println(cases); val matchz = Match(q"""List("hello")""", cases); matchz//;q"Some(List(5)).map{a => $matchz}"
+      case a => a
+    }
+    c.Expr[Option[T]](q"Some($result)")
   }
 
   def idiomBracket2[T: c.WeakTypeTag](c: Context)(x: c.Expr[T]): c.Expr[Option[Option[T]]] = {
@@ -190,9 +201,9 @@ object IdiomBracket {
         val applyTerm = getApplyTerm(cleanedArgs.length)
         if (cleanedArgs.forall(!isExtractFunction(_))) (q"Applicative[Option].$applyTerm(..$cleanedArgs)($ref1)", 1)
         else {
-          val names: List[String] = List.fill(cleanedArgs.size)(freshName())
+          val names: List[u.TermName] = List.fill(cleanedArgs.size)(freshName()).map(TermName(_))
           val transformedArgs = cleanedArgs.zip(names).map { case (arg, name) =>
-            val ident = Ident(TermName(name))
+            val ident = Ident(name)
             if (extractsArePresent(arg)) ident
             else q"Some($ident)"
           }
@@ -223,22 +234,22 @@ object IdiomBracket {
         }._2
         (Block(newExprs.init, newExprs.last), arityLastTransform)
       }
+      // TODO: Figure out why unchanged case pattern seems to go bonky in macro
       case Match(expr, cases) =>
-        val caseArgs = cases.map {
-          case cq"_ => $x1" => List(x1)
-          case cq" $x1 => $x2" => List(x1,x2)
-        }.flatten
-        val args = cleanArgs(expr :: caseArgs)
-        val applyTerm = getApplyTerm(args.size)
-        val names = List.fill(args.size)(freshName())
-        val terms = names.map(TermName(_))
-        val otherTermsIterator = terms.tail.toIterator
-        val tCases = cases.map {
-          case cq"_ => $x1" => cq"_ => ${otherTermsIterator.next()}"
-          case cq" $x1 => $x2" => cq"`${otherTermsIterator.next()}` => ${otherTermsIterator.next()}"
-        }.toList
-        val function = createFunction(q"${terms(0)} match { case ..$tCases}", names)
-        (q"Applicative[Option].$applyTerm(..$args)($function)", 1)
+        val (tCases, argsWithWhatTheyReplace) = cases.map {
+          case cq"$x1 => $x2" if extractsArePresent(x1) && extractsArePresent(x2) =>
+            ???
+          case cq"$x1 => $x2" if !extractsArePresent(x1) && extractsArePresent(x2) =>
+            val paramName = TermName(freshName())
+            (cq"$x1 => $paramName", (List(paramName), List(x2)))
+          case cq"$x1 => $x2" => println(x1);(cq"$x1 => $x2", (Nil, Nil))
+        }.unzip
+        val (names, args) = argsWithWhatTheyReplace.unzip
+        val allArgs = cleanArgs(expr :: args.flatten)
+        val applyTerm = getApplyTerm(allArgs.size)
+        val lhsName = TermName(freshName())
+        val function = createFunction(q"$lhsName match { case ..$tCases}", lhsName :: names.flatten)
+        (q"Applicative[Option].$applyTerm(..$allArgs)($function)", 1)
       case If(expr, trueCase, falseCase) =>
         val cleanParts = cleanArgs(List(expr, trueCase, falseCase))
         (q"Applicative[Option].apply3(..$cleanParts)(if(_) _ else _)", 1)
@@ -252,8 +263,8 @@ object IdiomBracket {
       TermName(applyFunName)
     }
 
-    def createFunction(rhs: u.Tree, args: List[String]) = {
-      val lhs = args.map( name => ValDef(Modifiers(Flag.PARAM), TermName(name), TypeTree(), EmptyTree))
+    def createFunction(rhs: u.Tree, args: List[u.TermName]) = {
+      val lhs = args.map( name => ValDef(Modifiers(Flag.PARAM), name, TypeTree(), EmptyTree))
       Function(lhs, rhs)
     }
 

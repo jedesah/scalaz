@@ -324,6 +324,42 @@ object ApplicativeTest extends SpecLite {
       f == None
   }
 
+  "Idiom bracket in interpolated String 2" ! forAll {(a: Option[String]) =>
+    import IdiomBracket.extract
+
+    case class Ok(message: String)
+    def nameOfMonth(num: Int): Option[String] = a
+    val month = 5
+
+    val f = IdiomBracket{
+      Ok(s"It’s ${extract(nameOfMonth(month.toInt))}!")
+    }
+
+    if (a.isDefined)
+      f == Some(Ok(s"It’s ${nameOfMonth(month.toInt).get}!"))
+    else
+      f == None
+  }
+
+  /*"Idiom bracket match statement with extractor" ! forAll {(a: Option[List[String]]) =>
+    import IdiomBracket.extract
+
+    val f = IdiomBracket.control{
+      a.get match {
+        case List(one) => one
+        case _ => ""
+      }
+    }
+
+    if (a.isDefined)
+      f == Some(a.get match {
+        case List(one) => one
+        case _ => ""
+      })
+    else
+      f == None
+  }*/
+
   "extract does not compile on it's own" in {
     val ast = q"""
                 import scalaz._
@@ -427,8 +463,8 @@ object ApplicativeTest extends SpecLite {
               """
     val transformed = transformLast(ast)
     val expected = q"""
-                    Applicative[Option].apply3(a, Some("hello"), Some("h"))(((x1, x2, x3) => x1 match {
-                      case `x2` => x3
+                    Applicative[Option].map(a)(((x1) => x1 match {
+                      case "hello" => "h"
                     }))
                    """
     compareAndPrintIfDifferent(transformed, expected, compareString = false)
@@ -445,13 +481,32 @@ object ApplicativeTest extends SpecLite {
               """
     val transformed = transformLast(ast)
     val expected = q"""
-                    Applicative[Option].apply4(a, Some("hello"), Some("h"), Some("e"))(((x1, x2, x3, x4) => x1 match {
-                      case `x2` => x3
-                      case _ => x4
+                    Applicative[Option].map(a)(((x1) => x1 match {
+                      case "hello" => "h"
+                      case _ => "e"
                     }))
                    """
     compareAndPrintIfDifferent(transformed, expected, compareString = false)
   }
+
+  /*"AST generation match with deconstructor" in {
+    val ast = q"""
+                  import scalaz.IdiomBracket.extract
+                  val a: Option[List[String]] = ???
+                  extract(a) match {
+                      case List(one) => one
+                      case _ => ""
+                  }
+              """
+    val transformed = transformLast(ast)
+    val expected = q"""
+                      Applicative[Option].map(a)(((x1) => x1 match {
+                        case List(one) => one
+                        case _ => "e"
+                      }))
+                    """
+    compareAndPrintIfDifferent(transformed, expected)
+  }*/
 
   "AST generation interpolated string" in {
     val ast = q"""
