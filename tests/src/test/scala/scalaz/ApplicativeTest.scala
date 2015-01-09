@@ -272,13 +272,13 @@ object ApplicativeTest extends SpecLite {
     val f = IdiomBracket {
       val bb = extract(b)
       extract(a) match {
-        case bb => "h"
+        case `bb` => "h"
         case _ => "e"
       }
     }
-    if (a.isDefined)
+    if (a.isDefined && b.isDefined)
       f == Some(a.get match {
-        case "hello" => "h"
+        case `b.get` => "h"
         case _ => "e"
       })
     else
@@ -354,6 +354,29 @@ object ApplicativeTest extends SpecLite {
     if (a.isDefined)
       f == Some(a.get match {
         case List(one) => one
+        case _ => ""
+      })
+    else
+      f == None
+  }*/
+
+  /*"Idiom bracket match statement with case class extractor" ! forAll {(a: Option[String]) =>
+    import IdiomBracket.extract
+
+    case class Ok(a: String)
+
+    val ok = a.map(Ok(_))
+
+    val f = IdiomBracket{
+      extract(ok) match {
+        case Ok(inside) => inside
+        case _ => ""
+      }
+    }
+
+    if (a.isDefined)
+      f == Some(ok.get match {
+        case Ok(inside) => inside
         case _ => ""
       })
     else
