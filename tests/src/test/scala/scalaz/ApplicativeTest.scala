@@ -78,7 +78,7 @@ object ApplicativeTest extends SpecLite {
   "Idiom brackets with 2 params" ! forAll { (a: Option[String], b: Option[String]) =>
     import IdiomBracket.extract
     def doThing(e: String, f: String) = e + f
-    val f = IdiomBracket(doThing(extract(a),extract(b)))
+    val f = IdiomBracket[Option, String](doThing(extract(a),extract(b)))
     if (a.isDefined && b.isDefined)
       f == Some(doThing(a.get, b.get))
     else
@@ -88,7 +88,7 @@ object ApplicativeTest extends SpecLite {
   "Idiom brackets with renamed import" ! forAll { (a: Option[String], b: Option[String]) =>
     import IdiomBracket.{extract => extractt}
     def doThing(e: String, f: String) = e + f
-    val f = IdiomBracket(doThing(extractt(a),extractt(b)))
+    val f = IdiomBracket[Option, String](doThing(extractt(a),extractt(b)))
     if (a.isDefined && b.isDefined)
       f == Some(doThing(a.get, b.get))
     else
@@ -98,7 +98,7 @@ object ApplicativeTest extends SpecLite {
   "Idiom brackets with implicit extract" ! forAll { (a: Option[String], b: Option[String]) =>
     import IdiomBracket.auto.extract
     def doThing(e: String, f: String) = e + f
-    val f = IdiomBracket(doThing(a,b))
+    val f = IdiomBracket[Option, String](doThing(a,b))
     if (a.isDefined && b.isDefined)
       f == Some(doThing(a.get, b.get))
     else
@@ -108,7 +108,7 @@ object ApplicativeTest extends SpecLite {
   "Idiom brackets with 3 params" ! forAll { (a: Option[String], b: Option[String], c: Option[String]) =>
     import IdiomBracket.extract
     def doThing(e: String, f: String, h: String) = e + f + h
-    val f = IdiomBracket(doThing(extract(a),extract(b), extract(c)))
+    val f = IdiomBracket[Option, String](doThing(extract(a),extract(b), extract(c)))
     if (a.isDefined && b.isDefined && c.isDefined)
       f == Some(doThing(a.get, b.get, c.get))
     else
@@ -118,7 +118,7 @@ object ApplicativeTest extends SpecLite {
   "Idiom brackets with mixed params" ! forAll { (a: String, b: Option[String], c: Option[String]) =>
     import IdiomBracket.extract
     def doThing(e: String, f: String, h: String) = e + f + h
-    val f = IdiomBracket(doThing(a,extract(b), extract(c)))
+    val f = IdiomBracket[Option, String](doThing(a,extract(b), extract(c)))
     if (b.isDefined && c.isDefined)
       f == Some(doThing(a, b.get, c.get))
     else
@@ -127,7 +127,7 @@ object ApplicativeTest extends SpecLite {
 
   "Idiom brackets with method invocation" ! forAll { (a: String, b: Option[Int], c: Option[Int]) =>
     import IdiomBracket.extract
-    val f = IdiomBracket(a.indexOf(extract(b), extract(c)))
+    val f = IdiomBracket[Option, Int](a.indexOf(extract(b), extract(c)))
     if (b.isDefined && c.isDefined)
       f == Some(a.indexOf(b.get, c.get))
     else
@@ -136,7 +136,7 @@ object ApplicativeTest extends SpecLite {
 
   "Idiom brackets with method invocation different" ! forAll { (a: Option[String], b: Int, c: Option[Int]) =>
     import IdiomBracket.extract
-    val f = IdiomBracket(extract(a).indexOf(b, extract(c)))
+    val f = IdiomBracket[Option, Int](extract(a).indexOf(b, extract(c)))
     if (a.isDefined && c.isDefined)
       f == Some(a.get.indexOf(b, c.get))
     else
@@ -145,7 +145,7 @@ object ApplicativeTest extends SpecLite {
 
   "Idiom brackets with really complex method invocation" ! forAll { (a: Option[String], b: Int, c: Option[Int]) =>
     import IdiomBracket.extract
-    val f = IdiomBracket(doThing(extract(a), extract(c).toString).indexOf(b, extract(c)))
+    val f = IdiomBracket[Option, Int](doThing(extract(a), extract(c).toString).indexOf(b, extract(c)))
     if (a.isDefined && c.isDefined)
       f == Some(a.get.indexOf(b, c.get))
     else
@@ -154,7 +154,7 @@ object ApplicativeTest extends SpecLite {
 
   "Idiom brackets with complex method invocation" ! forAll { (a: Option[String], b: Int, c: Option[Int], d: Option[String]) =>
     import IdiomBracket.extract
-    val f = IdiomBracket(doThing(extract(a), extract(d)).indexOf(b, extract(c)))
+    val f = IdiomBracket[Option, Int](doThing(extract(a), extract(d)).indexOf(b, extract(c)))
     if (a.isDefined && c.isDefined && d.isDefined)
       f == Some(doThing(a.get, d.get).indexOf(b, c.get))
     else
@@ -165,7 +165,7 @@ object ApplicativeTest extends SpecLite {
     import IdiomBracket.extract
     def doThing(e: String, f: String, h: String) = e + f + h
     def otherThing(ff: String) = ff * 3
-    val f = IdiomBracket(doThing(otherThing(extract(a)),extract(b), extract(c)))
+    val f = IdiomBracket[Option, String](doThing(otherThing(extract(a)),extract(b), extract(c)))
     if (a.isDefined && b.isDefined && c.isDefined)
       f == Some(doThing(otherThing(a.get), b.get, c.get))
     else
@@ -177,7 +177,7 @@ object ApplicativeTest extends SpecLite {
     def doThing(e: String, f: String, h: String) = e + f + h
     def otherThing(ff: String) = ff * 3
     def firstThis(gg: String) = gg.take(1)
-    val f = IdiomBracket(doThing(otherThing(firstThis(extract(a))),extract(b), extract(c)))
+    val f = IdiomBracket[Option, String](doThing(otherThing(firstThis(extract(a))),extract(b), extract(c)))
     if (a.isDefined && b.isDefined && c.isDefined)
       f == Some(doThing(otherThing(firstThis(a.get)), b.get, c.get))
     else
@@ -187,7 +187,7 @@ object ApplicativeTest extends SpecLite {
   "Idiom brackets with simple block" ! forAll { (a: Option[String]) =>
     import IdiomBracket.extract
     def otherThing(ff: String) = ff * 3
-    val f = IdiomBracket {
+    val f = IdiomBracket[Option, String] {
       otherThing(extract(a))
     }
     if (a.isDefined)
@@ -199,7 +199,7 @@ object ApplicativeTest extends SpecLite {
   "Idiom brackets with simple useless block" ! forAll { (a: Option[String]) =>
     import IdiomBracket.extract
     def otherThing(ff: String) = ff * 3
-    val f = IdiomBracket {
+    val f = IdiomBracket[Option, String] {
       otherThing(extract(a))
       otherThing(extract(a))
     }
@@ -212,7 +212,7 @@ object ApplicativeTest extends SpecLite {
   "Idiom brackets with block with pointless val" ! forAll { (a: Option[String]) =>
     import IdiomBracket.extract
     def otherThing(ff: String) = ff * 3
-    val f = IdiomBracket {
+    val f = IdiomBracket[Option, String] {
       val aa = otherThing(extract(a))
       aa
     }
@@ -225,7 +225,7 @@ object ApplicativeTest extends SpecLite {
   "Idiom brackets with block" ! forAll { (a: Option[String]) =>
     import IdiomBracket.extract
     def otherThing(ff: String) = ff * 3
-    val f = IdiomBracket {
+    val f = IdiomBracket[Option, String] {
       val aa = otherThing(extract(a))
       otherThing(aa)
     }
@@ -252,7 +252,7 @@ object ApplicativeTest extends SpecLite {
 
   "Idiom brackets match with extract in lhs" ! forAll { (a: Option[String]) =>
     import IdiomBracket.extract
-    val f = IdiomBracket {
+    val f = IdiomBracket[Option, String] {
       extract(a) match {
         case "hello" => "h"
         case _ => "e"
@@ -287,7 +287,7 @@ object ApplicativeTest extends SpecLite {
 
   "Idiom brackets if statement" ! forAll { (a: Option[String]) =>
     import IdiomBracket.extract
-    val f = IdiomBracket {
+    val f = IdiomBracket[Option, Int] {
       if (extract(a).length == 5) 10 else 20
     }
     if (a.isDefined)
@@ -317,7 +317,7 @@ object ApplicativeTest extends SpecLite {
   "Idiom bracket in interpolated String" ! forAll {(a: Option[String]) =>
     import IdiomBracket.extract
 
-    val f = IdiomBracket {s"It’s ${extract(a)}!"}
+    val f = IdiomBracket[Option, String] {s"It’s ${extract(a)}!"}
     if (a.isDefined)
       f == Some(s"It’s ${a.get}!")
     else
@@ -331,7 +331,7 @@ object ApplicativeTest extends SpecLite {
     def nameOfMonth(num: Int): Option[String] = a
     val month = 5
 
-    val f = IdiomBracket{
+    val f = IdiomBracket[Option, Ok]{
       Ok(s"It’s ${extract(nameOfMonth(month.toInt))}!")
     }
 

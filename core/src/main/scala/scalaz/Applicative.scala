@@ -126,10 +126,10 @@ object Applicative {
 }
 
 object IdiomBracket {
-  def apply[T](x: T): Option[T] = macro idiomBracket[T]
+  def apply[F[_]: Applicative,T](x: T): F[T] = macro idiomBracket[T,F]
   def apply2[T](x: T): Option[Option[T]] = macro idiomBracket2[T]
 
-  def control[T](x: T): Option[T] = macro controlImpl[T]
+  def control(x: String): Option[String] = macro controlImpl
 
   @compileTimeOnly("`extract` must be enclosed in an `IdiomBracket`")
   def extract[T](option: Option[T]): T = ??? // Should be removed by macro expansion
@@ -152,20 +152,24 @@ object IdiomBracket {
     c.Expr[Unit](result)
   }
 
-  def idiomBracket[T: c.WeakTypeTag](c: Context)(x: c.Expr[T]): c.Expr[Option[T]] = {
+  def idiomBracket[T: c.WeakTypeTag, F[_]](c: Context)(x: c.Expr[T])(ap: c.Expr[Applicative[F]]): c.Expr[F[T]] = {
     import c.universe._
     val result = transformAST(c.universe, () => c.freshName())(x.tree)
     if (!result.isDefined) c.warning(c.enclosingPosition, "IdiomBracket merely lifted expression, there is a probably a better more explicit way of achieving the same result")
-    c.Expr[Option[T]](result.getOrElse(q"Some(${x.tree})"))
+    c.Expr[F[T]](result.getOrElse(q"Some(${x.tree})"))
   }
 
-  def controlImpl[T: c.WeakTypeTag](c: Context)(x: c.Expr[T]): c.Expr[Option[T]] = {
+  def controlImpl(c: Context)(x: c.Expr[String]): c.Expr[Option[String]] = {
     import c.universe._
     val result = x.tree match {
-      case Match(expr, cases) => println(cases); val matchz = Match(q"""List("hello")""", cases); matchz//;q"Some(List(5)).map{a => $matchz}"
-      case a => a
+      case Match(expr, cases) =>
+        println(cases)
+        val matchz = Match(q"""List("hello")""", cases)
+        q"Some($matchz)"
+        //q"""Some(List("5")).map{a => a;$matchz}"""
+      case a => q"Some($a)"
     }
-    c.Expr[Option[T]](q"Some($result)")
+    c.Expr[Option[String]](c.untypecheck(result))
   }
 
   def idiomBracket2[T: c.WeakTypeTag](c: Context)(x: c.Expr[T]): c.Expr[Option[Option[T]]] = {
