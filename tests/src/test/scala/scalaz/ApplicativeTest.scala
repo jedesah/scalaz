@@ -1,8 +1,10 @@
 package scalaz
 
-import org.scalacheck.{Prop, Gen}
+import org.scalacheck.{Arbitrary, Prop, Gen}
+import Arbitrary.arbitrary
 import org.scalacheck.Prop.forAll
 
+import scala.concurrent.Await
 import scala.reflect.runtime.universe._
 import scala.reflect.runtime.{currentMirror => cm}
 import scala.tools.reflect.ToolBox
@@ -45,6 +47,9 @@ object ApplicativeTest extends SpecLite {
     }
   }
 
+  implicit def FutureArbitrary[A: Arbitrary]: Arbitrary[scala.concurrent.Future[A]] =
+    Arbitrary(arbitrary[A] map ((x: A) => scala.concurrent.Future.successful(x)))
+
   def compareAndPrintIfDifferent(actual: reflect.runtime.universe.Tree, expected: reflect.runtime.universe.Tree, compareString: Boolean = false) = {
     val areEqual = if(compareString) actual.toString == expected.toString else actual equalsStructure expected
     if (areEqual) true
@@ -62,7 +67,7 @@ object ApplicativeTest extends SpecLite {
     val nameGen = new NameGenerator
     val lastLines = tb.typecheck(ast).children.takeRight(nbLines)
     val testAST = if(nbLines == 1)lastLines.head else Block(lastLines.init, lastLines.last)
-    tb.untypecheck(IdiomBracket.transformAST(scala.reflect.runtime.universe, () => nameGen.freshName())(testAST).get)
+    tb.untypecheck(IdiomBracket.transformAST(scala.reflect.runtime.universe, () => nameGen.freshName())(testAST, q"App").get)
   }
 
   "replicateM is the same" ! forAll { (fa: Option[Int]) => forAll(Gen.choose(0, 100)) { n =>
@@ -78,7 +83,7 @@ object ApplicativeTest extends SpecLite {
   "Idiom brackets with 2 params" ! forAll { (a: Option[String], b: Option[String]) =>
     import IdiomBracket.extract
     def doThing(e: String, f: String) = e + f
-    val f = IdiomBracket[Option, String](doThing(extract(a),extract(b)))
+    val f = IdiomBracket[Option, String](doThing(extract[Option, String](a),extract[Option, String](b)))
     if (a.isDefined && b.isDefined)
       f == Some(doThing(a.get, b.get))
     else
@@ -341,6 +346,27 @@ object ApplicativeTest extends SpecLite {
       f == None
   }
 
+  "Idiom bracket with List" ! forAll {(a: List[String], b: List[String]) =>
+    import IdiomBracket.extract
+
+    val f = IdiomBracket[List, String](extract(a) + extract(b))
+
+    f == Applicative[List].apply2(a,b)(_ + _)
+  }
+
+  "Idiom bracket with Future" ! forAll {(a: scala.concurrent.Future[String], b: scala.concurrent.Future[String]) =>
+    import IdiomBracket.extract
+    import scala.concurrent.Future
+    import scala.concurrent.ExecutionContext.Implicits.global
+    import scala.concurrent.duration._
+
+    implicit val applicative: Applicative[Future] = scalaz.std.scalaFuture.futureInstance
+
+    val f = IdiomBracket[Future, String](extract(a) + extract(b))
+
+    Await.result(f, 100.milliseconds) == Await.result(Applicative[Future].apply2(a,b)(_ + _), 100.milliseconds)
+  }
+
   /*"Idiom bracket match statement with extractor" ! forAll {(a: Option[List[String]]) =>
     import IdiomBracket.extract
 
@@ -392,7 +418,7 @@ object ApplicativeTest extends SpecLite {
     tb.compile(ast).mustThrowA[scala.tools.reflect.ToolBoxError]
   }
 
-  "AST generation" in {
+  /*"AST generation" in {
     val ast = q"""
                 import scalaz.IdiomBracket.extract
                 def doThing(a: String, b: String) = ???
@@ -402,7 +428,7 @@ object ApplicativeTest extends SpecLite {
               """
     val transformed = transformLast(ast)
     val expected = q"""
-                    Applicative[Option].apply2(a,b)(doThing)
+                    App.apply2(a,b)(doThing)
                    """
     compareAndPrintIfDifferent(transformed, expected)
   }
@@ -419,12 +445,12 @@ object ApplicativeTest extends SpecLite {
               """
     val transformed = transformLast(ast)
     val expected = q"""
-                    Applicative[Option].apply3(
-                      Applicative[Option].apply2(
+                    App.apply3(
+                      App.apply2(
                         a,
-                        Applicative[Option].map(c)(x4 => x4.toString())
+                        App.map(c)(x4 => x4.toString())
                       )(doThing),
-                      Some(b),
+                      App.pure(b),
                       c
                     )((x1, x2, x3) => x1.indexOf(x2,x3))
                    """
@@ -441,7 +467,7 @@ object ApplicativeTest extends SpecLite {
               """
     val transformed = transformLast(ast)
     val expected = q"""
-                    Applicative[Option].apply3(Applicative[Option].map(a)(otherThing),b,c)(doThing)
+                    App.apply3(App.map(a)(otherThing),b,c)(doThing)
                   """
     compareAndPrintIfDifferent(transformed, expected)
   }
@@ -457,7 +483,7 @@ object ApplicativeTest extends SpecLite {
               """
     val transformed = transformLast(ast, nbLines = 2)
     val expected = q"""
-                    {val aa = Applicative[Option].map(a)(otherThing); Applicative[Option].map(aa)(otherThing)}
+                    {val aa = App.map(a)(otherThing); App.map(aa)(otherThing)}
                    """
     compareAndPrintIfDifferent(transformed, expected)
   }
@@ -472,8 +498,8 @@ object ApplicativeTest extends SpecLite {
               """
     val transformed = transformLast(ast, nbLines = 2)
     val expected = q"""
-                    val aa = Applicative[Option].map(a)(x1 => Applicative[Option].map(x1)(otherThing))
-                    Applicative[Option].map(aa)(x2 => Applicative[Option].map(x2)(otherThing))
+                    val aa = App.map(a)(x1 => App.map(x1)(otherThing))
+                    App.map(aa)(x2 => App.map(x2)(otherThing))
                    """
     compareAndPrintIfDifferent(transformed, expected, compareString = true)
   }
@@ -486,7 +512,7 @@ object ApplicativeTest extends SpecLite {
               """
     val transformed = transformLast(ast)
     val expected = q"""
-                    Applicative[Option].map(a)(((x1) => x1 match {
+                    App.map(a)(((x1) => x1 match {
                       case "hello" => "h"
                     }))
                    """
@@ -504,7 +530,7 @@ object ApplicativeTest extends SpecLite {
               """
     val transformed = transformLast(ast)
     val expected = q"""
-                    Applicative[Option].map(a)(((x1) => x1 match {
+                    App.map(a)(((x1) => x1 match {
                       case "hello" => "h"
                       case _ => "e"
                     }))
@@ -539,7 +565,7 @@ object ApplicativeTest extends SpecLite {
               """
     val transformed = transformLast(ast)
     val expected = q"""
-                       Applicative[Option].map(a)(((x1) => scala.StringContext.apply("It\'s ", "!").s(x1)))
+                       App.map(a)(((x1) => scala.StringContext.apply("It\'s ", "!").s(x1)))
                     """
     compareAndPrintIfDifferent(transformed, expected, compareString = true)
   }
@@ -608,7 +634,7 @@ object ApplicativeTest extends SpecLite {
                     (if (_) _ else _)
                    """
     compareAndPrintIfDifferent(transformed, expected)
-  }*/
+  }*/*/
 
   "assumption" ! forAll { (a: Option[String], b: Option[String]) =>
     def doThing(a: String, b: String) = a + b

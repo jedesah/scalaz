@@ -132,7 +132,7 @@ object IdiomBracket {
   def control(x: String): Option[String] = macro controlImpl
 
   @compileTimeOnly("`extract` must be enclosed in an `IdiomBracket`")
-  def extract[T](option: Option[T]): T = ??? // Should be removed by macro expansion
+  def extract[F[_], T](option: F[T]): T = ??? // Should be removed by macro expansion
 
   def debug(x: Any): Unit = macro debugImpl
 
@@ -154,9 +154,10 @@ object IdiomBracket {
 
   def idiomBracket[T: c.WeakTypeTag, F[_]](c: Context)(x: c.Expr[T])(ap: c.Expr[Applicative[F]]): c.Expr[F[T]] = {
     import c.universe._
-    val result = transformAST(c.universe, () => c.freshName())(x.tree)
+    val applicativeInstance = ap.tree
+    val result = transformAST(c.universe, () => c.freshName())(x.tree, applicativeInstance)
     if (!result.isDefined) c.warning(c.enclosingPosition, "IdiomBracket merely lifted expression, there is a probably a better more explicit way of achieving the same result")
-    c.Expr[F[T]](result.getOrElse(q"Some(${x.tree})"))
+    c.Expr[F[T]](result.getOrElse(q"$applicativeInstance.pure(${x.tree})"))
   }
 
   def controlImpl(c: Context)(x: c.Expr[String]): c.Expr[Option[String]] = {
@@ -174,7 +175,7 @@ object IdiomBracket {
 
   def idiomBracket2[T: c.WeakTypeTag](c: Context)(x: c.Expr[T]): c.Expr[Option[Option[T]]] = {
     import c.universe._
-    val result = transformAST(c.universe, () => c.freshName())(x.tree)
+    val result = transformAST(c.universe, () => c.freshName())(x.tree, q"scalaz.Applicative[Option]")
     if (!result.isDefined) c.warning(c.enclosingPosition, "IdiomBracket merely lifted expression, there is a probably a better more explicit way of achieving the same result")
     c.Expr[Option[Option[T]]](result.getOrElse(q"Some(Some($x.tree))"))
   }
@@ -187,7 +188,7 @@ object IdiomBracket {
     * @param tree Tree to transform
     * @return Some(Tree) if the tree was transformed or none if it was not transformed
     */
-  def transformAST(u: scala.reflect.api.Universe, freshName: () => String)(tree: u.Tree): Option[u.Tree] = {
+  def transformAST(u: scala.reflect.api.Universe, freshName: () => String)(tree: u.Tree, applicativeInstance: u.Tree): Option[u.Tree] = {
     import u._
     def transformR(tree: u.Tree): (u.Tree, Int) = tree match {
       case fun: Apply if isExtractFunction(fun) => (fun.args(0), 1)
@@ -203,17 +204,17 @@ object IdiomBracket {
         }
         val cleanedArgs = cleanArgs(args1)
         val applyTerm = getApplyTerm(cleanedArgs.length)
-        if (cleanedArgs.forall(!isExtractFunction(_))) (q"Applicative[Option].$applyTerm(..$cleanedArgs)($ref1)", 1)
+        if (cleanedArgs.forall(!isExtractFunction(_))) (q"$applicativeInstance.$applyTerm(..$cleanedArgs)($ref1)", 1)
         else {
           val names: List[u.TermName] = List.fill(cleanedArgs.size)(freshName()).map(TermName(_))
           val transformedArgs = cleanedArgs.zip(names).map { case (arg, name) =>
             val ident = Ident(name)
             if (extractsArePresent(arg)) ident
-            else q"Some($ident)"
+            else q"$applicativeInstance.pure($ident)"
           }
-          val inner = createFunction(q"Applicative[Option].$applyTerm(..$transformedArgs)($ref1)", names)
+          val inner = createFunction(q"$applicativeInstance.$applyTerm(..$transformedArgs)($ref1)", names)
           val reCleanedArgs = cleanArgs(cleanedArgs)
-          (q"Applicative[Option].$applyTerm(..$reCleanedArgs)($inner)", 2)
+          (q"$applicativeInstance.$applyTerm(..$reCleanedArgs)($inner)", 2)
         }
       case Block(exprs, finalExpr) => {
         var arityLastTransform: Int = 0
@@ -253,10 +254,10 @@ object IdiomBracket {
         val applyTerm = getApplyTerm(allArgs.size)
         val lhsName = TermName(freshName())
         val function = createFunction(q"$lhsName match { case ..$tCases}", lhsName :: names.flatten)
-        (q"Applicative[Option].$applyTerm(..$allArgs)($function)", 1)
+        (q"$applicativeInstance.$applyTerm(..$allArgs)($function)", 1)
       case If(expr, trueCase, falseCase) =>
         val cleanParts = cleanArgs(List(expr, trueCase, falseCase))
-        (q"Applicative[Option].apply3(..$cleanParts)(if(_) _ else _)", 1)
+        (q"$applicativeInstance.apply3(..$cleanParts)(if(_) _ else _)", 1)
       case _ => (tree, 0)
     }
 
@@ -333,7 +334,7 @@ object IdiomBracket {
         val (newArg, transformArity) = transformR(normalArg)
         // If the argument has not undergone a transformation, then lift the computation in order
         // to fit into the new AST
-        if (transformArity == 0) q"Some($normalArg)"
+        if (transformArity == 0) q"$applicativeInstance.pure($normalArg)"
         // If it has been transformed than it has already been lifter in sort
         // because of the transformation required to remove the extract
         else newArg
