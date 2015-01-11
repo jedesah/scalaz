@@ -273,23 +273,23 @@ object ApplicativeTest extends SpecLite {
       f == None
   }
 
-  /*"Idiom brackets match with extract in case statement" ! forAll { (a: Option[String], b: Option[String]) =>
+  "Idiom brackets match with stable identifier in case statement" ! forAll { (a: Option[String], b: Option[String]) =>
     import IdiomBracket.extract
-    val f = IdiomBracket {
+    val f = IdiomBracket[Option, String] {
       val bb = extract(b)
       extract(a) match {
         case `bb` => "h"
         case _ => "e"
       }
     }
-    if (a.isDefined && b.isDefined)
-      f == Some(a.get match {
-        case `b.get` => "h"
+    val expected = Applicative[Option].apply2(a,b)((a,b) =>
+      a match {
+        case `b` => "h"
         case _ => "e"
-      })
-    else
-      f == None
-  }*/
+      }
+    )
+    f == expected
+  }
 
   "Idiom brackets if statement" ! forAll { (a: Option[String]) =>
     import IdiomBracket.extract
@@ -460,9 +460,9 @@ object ApplicativeTest extends SpecLite {
     tb.compile(ast).mustThrowA[scala.tools.reflect.ToolBoxError]
   }
 
-  /*"AST generation" in {
+  "AST generation" in {
     val ast = q"""
-                import scalaz.IdiomBracket.extract
+                import scalaz.IdiomBracket.auto.extract
                 def doThing(a: String, b: String) = ???
                 val a: Option[String] = ???
                 val b: Option[String] = ???
@@ -478,7 +478,7 @@ object ApplicativeTest extends SpecLite {
   "AST generation complex method invocation" in {
     //IdiomBracket(doThing(extract(a), extract(c).toString).indexOf(b, extract(c)))
     val ast = q"""
-                import scalaz.IdiomBracket.extract
+                import scalaz.IdiomBracket.auto.extract
                 def doThing(a: String, b: String): String = ???
                 val a: Option[String] = ???
                 val b: Int = ???
@@ -501,7 +501,7 @@ object ApplicativeTest extends SpecLite {
 
   "AST generation recursive" in {
     val ast = q"""
-                import scalaz.IdiomBracket.extract
+                import scalaz.IdiomBracket.auto.extract
                 def doThing(a: String, b: String, c: String): String = ???
                 def otherThing(a: String): String = ???
                 val a,b,c: Option[String] = ???
@@ -516,7 +516,7 @@ object ApplicativeTest extends SpecLite {
 
   "AST generation with block" in {
     val ast = q"""
-                import scalaz.IdiomBracket.extract
+                import scalaz.IdiomBracket.auto.extract
                 def otherThing(a: String): String = a
                 val a: Option[String] = Option("hello")
                 val b: Option[String] = Some("h")
@@ -532,7 +532,7 @@ object ApplicativeTest extends SpecLite {
 
   "AST generation with double extract" in {
     val ast = q"""
-                import scalaz.IdiomBracket.extract
+                import scalaz.IdiomBracket.auto.extract
                 val a: Option[Option[String]] = ???
                 def otherThing(a: String): String = ???
                 val aa = otherThing(extract(extract(a)))
@@ -548,7 +548,7 @@ object ApplicativeTest extends SpecLite {
 
   "AST generation match with extract in lhs" in {
     val ast = q"""
-                import scalaz.IdiomBracket.extract
+                import scalaz.IdiomBracket.auto.extract
                 val a: Option[String] = ???
                 extract(a) match { case "hello" => "h" }
               """
@@ -563,7 +563,7 @@ object ApplicativeTest extends SpecLite {
 
   "AST generation match with extract in lhs 2" in {
     val ast = q"""
-                import scalaz.IdiomBracket.extract
+                import scalaz.IdiomBracket.auto.extract
                 val a: Option[String] = ???
                 extract(a) match {
                   case "hello" => "h"
@@ -582,7 +582,7 @@ object ApplicativeTest extends SpecLite {
 
   /*"AST generation match with deconstructor" in {
     val ast = q"""
-                  import scalaz.IdiomBracket.extract
+                  import scalaz.IdiomBracket.auto.extract
                   val a: Option[List[String]] = ???
                   extract(a) match {
                       case List(one) => one
@@ -601,7 +601,7 @@ object ApplicativeTest extends SpecLite {
 
   "AST generation interpolated string" in {
     val ast = q"""
-                import scalaz.IdiomBracket.extract
+                import scalaz.IdiomBracket.auto.extract
                 val a: Option[String] = ???
                 s"It's $${extract(a)}!"
               """
@@ -612,33 +612,31 @@ object ApplicativeTest extends SpecLite {
     compareAndPrintIfDifferent(transformed, expected, compareString = true)
   }
 
-  /*"AST generation match with extract in case pattern" in {
-    val ast = q
-                import scalaz.IdiomBracket.extract
-                import scalaz.ApplicativeTest._
+  "AST generation match with stable identifier refering to extracted val" in {
+    val ast = q"""
+                import scalaz.IdiomBracket.auto.extract
+                val a: Option[String] = ???
+                val b: Option[String] = ???
                 val bb = extract(b)
                 extract(a) match {
-                  case bb => "h"
+                  case `bb` => "h"
                   case _ => "e"
                 }
-
-    val tb = cm.mkToolBox()
-    val transformed = tb.untypecheck(IdiomBracket.transformAST(scala.reflect.runtime.universe, null)(tb.typecheck(ast)).get)
+              """
+    val transformed = transformLast(ast, nbLines = 2)
     val expected = q"""
-                    import scalaz.IdiomBracket.extract
-                    import scalaz.ApplicativeTest._
                     val bb = b
-                    a map {
-                      case b if b.map(_ == a).getOrElse(false) => "h"
+                    App.apply2(a,bb)((x2,x1) => x2 match {
+                      case `x1` => "h"
                       case _ => "e"
-                    }
+                    })
                    """
     compareAndPrintIfDifferent(transformed, expected)
-  }*/
+  }
 
   /*"AST generation if statement" in {
     val ast = q"""
-                import scalaz.IdiomBracket.extract
+                import scalaz.IdiomBracket.auto.extract
                 val a: Option[String] = ???
                 if (extract(a).length == 5) 10 else 20
               """
@@ -658,7 +656,7 @@ object ApplicativeTest extends SpecLite {
 
   /*"AST generation if statement complex" in {
     val ast = q"""
-                import scalaz.IdiomBracket.extract
+                import scalaz.IdiomBracket.auto.extract
                 val a: Option[String] = ???
                 val b: Option[String] = ???
                 if (extract(a).length == 5) extract(b) else "hello"
@@ -676,7 +674,7 @@ object ApplicativeTest extends SpecLite {
                     (if (_) _ else _)
                    """
     compareAndPrintIfDifferent(transformed, expected)
-  }*/*/
+  }*/
 
   "assumption" ! forAll { (a: Option[String], b: Option[String]) =>
     def doThing(a: String, b: String) = a + b

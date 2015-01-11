@@ -114,6 +114,7 @@ trait Applicative[F[_]] extends Apply[F] { self =>
 
 import language.experimental.macros
 import scala.annotation.compileTimeOnly
+import scala.collection.mutable.ListBuffer
 
 object Applicative {
   @inline def apply[F[_]](implicit F: Applicative[F]): Applicative[F] = F
@@ -133,7 +134,7 @@ object IdiomBracket {
   def control(x: String): Option[String] = macro controlImpl
 
   @compileTimeOnly("`extract` must be enclosed in an `IdiomBracket`")
-  def extract[F[_], T](option: F[T]): T = ??? // Should be removed by macro expansion
+  def extract[F[_], T](applicative: F[T]): T = ??? // Should be removed by macro expansion
 
   def debug(x: Any): Unit = macro debugImpl
 
@@ -174,9 +175,10 @@ object IdiomBracket {
     val result = x.tree match {
       case Match(expr, cases) =>
         println(cases)
-        val matchz = Match(q"""List("hello")""", cases)
+        //val matchz = Match(q"""List("hello")""", cases.map(c.untypecheck(_).asInstanceOf[CaseDef]))
+        val matchz = Match(q"""List("hello")""", cases.map{case cq"$x1 => $x2" => cq"$x1 => $x2"})
         q"Some($matchz)"
-        //q"""Some(List("5")).map{a => a;$matchz}"""
+        q"""Some(List("5")).map{a => a;$matchz}"""
       case a => q"Some($a)"
     }
     c.Expr[Option[String]](c.untypecheck(result))
@@ -250,19 +252,23 @@ object IdiomBracket {
       }
       // TODO: Figure out why unchanged case pattern seems to go bonky in macro
       case Match(expr, cases) =>
-        val (tCases, argsWithWhatTheyReplace) = cases.map {
-          case cq"$x1 => $x2" if extractsArePresent(x1) && extractsArePresent(x2) =>
-            ???
-          case cq"$x1 => $x2" if !extractsArePresent(x1) && extractsArePresent(x2) =>
-            val paramName = TermName(freshName())
-            (cq"$x1 => $paramName", (List(paramName), List(x2)))
-          case cq"$x1 => $x2" => println(x1);(cq"$x1 => $x2", (Nil, Nil))
+        val (tCases, argsWithWhatTheyReplace: List[List[(u.TermName, u.Tree)]]@unchecked) = cases.map { case cq"$x1 => $x2" =>
+          val (newX1, argsWithWhatTheyReplace1) =
+            if (extractsArePresent(x1)) replaceExtractWithRef(x1)
+            else (x1, (Nil))
+          val (newX2, argsWithWhatTheyReplace2) =
+            if (extractsArePresent(x2)) {
+              val paramName = TermName(freshName())
+              (Ident(paramName), (List(paramName,x2)))
+            }
+            else (x2, (Nil))
+          (cq"$newX1 => $newX2", argsWithWhatTheyReplace1 ++ argsWithWhatTheyReplace2)
         }.unzip
-        val (names, args) = argsWithWhatTheyReplace.unzip
-        val allArgs = cleanArgs(expr :: args.flatten)
+        val (names, args) = argsWithWhatTheyReplace.flatten.unzip
+        val allArgs = cleanArgs(expr :: args)
         val applyTerm = getApplyTerm(allArgs.size)
         val lhsName = TermName(freshName())
-        val function = createFunction(q"$lhsName match { case ..$tCases}", lhsName :: names.flatten)
+        val function = createFunction(q"$lhsName match { case ..$tCases}", lhsName :: names)
         (q"$applicativeInstance.$applyTerm(..$allArgs)($function)", 1)
       case If(expr, trueCase, falseCase) =>
         if (!monadic) {
@@ -302,6 +308,21 @@ object IdiomBracket {
       val args = names.map(name => Ident(TermName(name)))
       val rhs = Apply(Select(select, methodName), args)
       Function(lhs, rhs)
+    }
+
+    def replaceExtractWithRef(pattern: u.Tree): (u.Tree, (List[(u.TermName,u.Tree)])) = {
+      val namesWithReplaced = ListBuffer[(u.TermName, u.Tree)]()
+      object ReplaceExtract extends Transformer {
+        override def transform(tree: u.Tree): u.Tree = tree match {
+          case fun: Apply if isExtractFunction(fun) =>
+            val name = TermName(freshName())
+            namesWithReplaced += ((name, fun))
+            q"`$name`"
+          case _ => super.transform(tree)
+        }
+      }
+      val result = ReplaceExtract.transform(pattern)
+      (result, namesWithReplaced.toList)
     }
 
     def addExtractR(expr: u.Tree, names: Map[String, Int]): u.Tree = {
