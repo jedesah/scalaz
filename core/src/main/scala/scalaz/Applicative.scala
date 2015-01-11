@@ -213,19 +213,19 @@ object IdiomBracket {
           val Select(exprRef, methodName) = ref
           (createMethod(methodName, args.size, freshName), exprRef :: args)
         }
-        val cleanedArgs = cleanArgs(args1)
-        val applyTerm = getApplyTerm(cleanedArgs.length)
-        if (cleanedArgs.forall(!isExtractFunction(_))) (q"$applicativeInstance.$applyTerm(..$cleanedArgs)($ref1)", 1)
+        val liftedArgs = args1.map(lift(_))
+        val applyTerm = getApplyTerm(liftedArgs.length)
+        if (liftedArgs.forall(!isExtractFunction(_))) (q"$applicativeInstance.$applyTerm(..$liftedArgs)($ref1)", 1)
         else {
-          val names: List[u.TermName] = List.fill(cleanedArgs.size)(freshName()).map(TermName(_))
-          val transformedArgs = cleanedArgs.zip(names).map { case (arg, name) =>
+          val names: List[u.TermName] = List.fill(liftedArgs.size)(freshName()).map(TermName(_))
+          val transformedArgs = liftedArgs.zip(names).map { case (arg, name) =>
             val ident = Ident(name)
             if (extractsArePresent(arg)) ident
             else q"$applicativeInstance.pure($ident)"
           }
           val inner = createFunction(q"$applicativeInstance.$applyTerm(..$transformedArgs)($ref1)", names)
-          val reCleanedArgs = cleanArgs(cleanedArgs)
-          (q"$applicativeInstance.$applyTerm(..$reCleanedArgs)($inner)", 2)
+          val reLiftedArgs = liftedArgs.map(lift(_))
+          (q"$applicativeInstance.$applyTerm(..$reLiftedArgs)($inner)", 2)
         }
       case Block(exprs, finalExpr) => {
         var arityLastTransform: Int = 0
@@ -265,18 +265,18 @@ object IdiomBracket {
           (cq"$newX1 => $newX2", argsWithWhatTheyReplace1 ++ argsWithWhatTheyReplace2)
         }.unzip
         val (names, args) = argsWithWhatTheyReplace.flatten.unzip
-        val allArgs = cleanArgs(expr :: args)
+        val allArgs = (expr :: args).map(lift(_))
         val applyTerm = getApplyTerm(allArgs.size)
         val lhsName = TermName(freshName())
         val function = createFunction(q"$lhsName match { case ..$tCases}", lhsName :: names)
         (q"$applicativeInstance.$applyTerm(..$allArgs)($function)", 1)
       case If(expr, trueCase, falseCase) =>
         if (!monadic) {
-          val cleanParts = cleanArgs(List(expr, trueCase, falseCase))
-          (q"$applicativeInstance.apply3(..$cleanParts)(if(_) _ else _)", 1)
+          val liftedParts = List(expr, trueCase, falseCase).map(lift(_))
+          (q"$applicativeInstance.apply3(..$liftedParts)(if(_) _ else _)", 1)
         }
         else {
-          val List(exprT, trueCaseT, falseCaseT) = cleanArgs(List(expr, trueCase, falseCase))
+          val List(exprT, trueCaseT, falseCaseT) = List(expr, trueCase, falseCase).map(lift(_))
           (q"$applicativeInstance.bind($exprT)(if(_) $trueCaseT else $falseCaseT)", 1)
         }
       case _ => (tree, 0)
@@ -364,13 +364,20 @@ object IdiomBracket {
       }
     }
 
-    def cleanArgs(args: List[u.Tree]): List[u.Tree] = args.map {
+    /**
+     * Lifts the following expression to an Applicative either by removing an extract function (it can be deeply nested)
+     * or by simply adding a call to the pure function of the applicativeInstance if the expression contained no extract
+     * functions.
+     * @param expr Expression to be lifted
+     * @return New expression that has been lifted
+     */
+    def lift(expr: u.Tree): u.Tree = expr match {
       case extract: Apply if isExtractFunction(extract) => extract.args(0)
-      case normalArg => {
-        val (newArg, transformArity) = transformR(normalArg)
+      case normal => {
+        val (newArg, transformArity) = transformR(normal)
         // If the argument has not undergone a transformation, then lift the computation in order
         // to fit into the new AST
-        if (transformArity == 0) q"$applicativeInstance.pure($normalArg)"
+        if (transformArity == 0) q"$applicativeInstance.pure($normal)"
         // If it has been transformed than it has already been lifter in sort
         // because of the transformation required to remove the extract
         else newArg
