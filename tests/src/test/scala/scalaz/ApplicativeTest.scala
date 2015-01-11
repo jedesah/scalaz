@@ -409,7 +409,7 @@ object ApplicativeTest extends SpecLite {
     Await.result(f, 1.second) == "hello"
   }
 
-  /*"Idiom bracket match statement with extractor" ! forAll {(a: Option[List[String]]) =>
+  /*"Idiom bracket match statement with unapply" ! forAll {(a: Option[List[String]]) =>
     import IdiomBracket.extract
 
     val f = IdiomBracket.control{
@@ -428,7 +428,7 @@ object ApplicativeTest extends SpecLite {
       f == None
   }*/
 
-  /*"Idiom bracket match statement with case class extractor" ! forAll {(a: Option[String]) =>
+  /*"Idiom bracket match statement with case class unapply" ! forAll {(a: Option[String]) =>
     import IdiomBracket.extract
 
     case class Ok(a: String)
@@ -580,7 +580,7 @@ object ApplicativeTest extends SpecLite {
     compareAndPrintIfDifferent(transformed, expected, compareString = false)
   }
 
-  /*"AST generation match with deconstructor" in {
+  /*"AST generation match with unapply" in {
     val ast = q"""
                   import scalaz.IdiomBracket.auto.extract
                   val a: Option[List[String]] = ???
