@@ -5,6 +5,7 @@ import Arbitrary.arbitrary
 import org.scalacheck.Prop.forAll
 
 import scala.concurrent.Await
+import scala.concurrent.Promise
 import scala.reflect.runtime.universe._
 import scala.reflect.runtime.{currentMirror => cm}
 import scala.tools.reflect.ToolBox
@@ -62,12 +63,12 @@ object ApplicativeTest extends SpecLite {
     }
   }
 
-  def transformLast(ast: reflect.runtime.universe.Tree, nbLines: Int = 1) = {
+  def transformLast(ast: reflect.runtime.universe.Tree, nbLines: Int = 1, monadic: Boolean = false) = {
     val tb = cm.mkToolBox()
     val nameGen = new NameGenerator
     val lastLines = tb.typecheck(ast).children.takeRight(nbLines)
     val testAST = if(nbLines == 1)lastLines.head else Block(lastLines.init, lastLines.last)
-    tb.untypecheck(IdiomBracket.transformAST(scala.reflect.runtime.universe, () => nameGen.freshName())(testAST, q"App").get)
+    tb.untypecheck(IdiomBracket.transformAST(scala.reflect.runtime.universe, () => nameGen.freshName())(testAST, q"App", monadic).get)
   }
 
   "replicateM is the same" ! forAll { (fa: Option[Int]) => forAll(Gen.choose(0, 100)) { n =>
@@ -365,6 +366,47 @@ object ApplicativeTest extends SpecLite {
     val f = IdiomBracket[Future, String](extract(a) + extract(b))
 
     Await.result(f, 100.milliseconds) == Await.result(Applicative[Future].apply2(a,b)(_ + _), 100.milliseconds)
+  }
+
+  "Idiom bracket monad in interpolated String" ! forAll {(a: Option[String]) =>
+    import IdiomBracket.extract
+
+    val f = IdiomBracket.monad[Option, String] {s"It’s ${extract(a)}!"}
+    if (a.isDefined)
+      f == Some(s"It’s ${a.get}!")
+    else
+      f == None
+  }
+
+  "Idiom bracket monad is lazy with if/else" in {
+    import IdiomBracket.extract
+    import scala.concurrent.Future
+    import scala.concurrent.Promise
+    import scala.concurrent.ExecutionContext.Implicits.global
+    import scala.concurrent.duration._
+
+    val aPromise = Promise[Boolean]()
+    val a = aPromise.future
+
+    val bPromise = Promise[String]()
+    val b = bPromise.future
+
+    val cPromise = Promise[String]()
+    val c = cPromise.future
+
+    implicit val monad: Monad[Future] = scalaz.std.scalaFuture.futureInstance
+
+    val f = IdiomBracket.monad[Future, String](if(extract(a)) extract(b) else extract(c))
+
+    f.value == None
+
+    aPromise.success(true)
+
+    f.value == None
+
+    bPromise.success("hello")
+
+    Await.result(f, 1.second) == "hello"
   }
 
   /*"Idiom bracket match statement with extractor" ! forAll {(a: Option[List[String]]) =>
@@ -673,6 +715,36 @@ object ApplicativeTest extends SpecLite {
       f == Some(otherThing(otherThing(a.get)))
     else
       f == None
+  }
+
+  "assumption future" in {
+    import scala.concurrent.Future
+    import scala.concurrent.Promise
+    import scala.concurrent.ExecutionContext.Implicits.global
+    import scala.concurrent.duration._
+
+    val aPromise = Promise[Boolean]()
+    val a = aPromise.future
+
+    val bPromise = Promise[String]()
+    val b = bPromise.future
+
+    val cPromise = Promise[String]()
+    val c = cPromise.future
+
+    implicit val monad: Monad[Future] = scalaz.std.scalaFuture.futureInstance
+
+    val f = Monad[Future].bind(a)(if(_) b else c)
+
+    f.value == None
+
+    aPromise.success(true)
+
+    f.value == None
+
+    bPromise.success("hello")
+
+    Await.result(f, 1.second) == "hello"
   }
 
 }

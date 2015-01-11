@@ -128,6 +128,7 @@ object Applicative {
 object IdiomBracket {
   def apply[F[_]: Applicative,T](x: T): F[T] = macro idiomBracket[T,F]
   def apply2[T](x: T): Option[Option[T]] = macro idiomBracket2[T]
+  def monad[F[_]: Monad,T](x: T): F[T] = macro idiomBracketMonad[T,F]
 
   def control(x: String): Option[String] = macro controlImpl
 
@@ -155,9 +156,17 @@ object IdiomBracket {
   def idiomBracket[T: c.WeakTypeTag, F[_]](c: Context)(x: c.Expr[T])(ap: c.Expr[Applicative[F]]): c.Expr[F[T]] = {
     import c.universe._
     val applicativeInstance = ap.tree
-    val result = transformAST(c.universe, () => c.freshName())(x.tree, applicativeInstance)
+    val result = transformAST(c.universe, () => c.freshName())(x.tree, applicativeInstance, monadic = false)
     if (!result.isDefined) c.warning(c.enclosingPosition, "IdiomBracket merely lifted expression, there is a probably a better more explicit way of achieving the same result")
     c.Expr[F[T]](result.getOrElse(q"$applicativeInstance.pure(${x.tree})"))
+  }
+
+  def idiomBracketMonad[T, F[_]](c: Context)(x: c.Expr[T])(m: c.Expr[Monad[F]]): c.Expr[F[T]] = {
+    import c.universe._
+    val monadInstance = m.tree
+    val result = transformAST(c.universe, () => c.freshName())(x.tree, monadInstance, monadic = true)
+    if (!result.isDefined) c.warning(c.enclosingPosition, "IdiomBracket merely lifted expression, there is a probably a better more explicit way of achieving the same result")
+    c.Expr[F[T]](result.getOrElse(q"$monadInstance.pure(${x.tree})"))
   }
 
   def controlImpl(c: Context)(x: c.Expr[String]): c.Expr[Option[String]] = {
@@ -175,7 +184,7 @@ object IdiomBracket {
 
   def idiomBracket2[T: c.WeakTypeTag](c: Context)(x: c.Expr[T]): c.Expr[Option[Option[T]]] = {
     import c.universe._
-    val result = transformAST(c.universe, () => c.freshName())(x.tree, q"scalaz.Applicative[Option]")
+    val result = transformAST(c.universe, () => c.freshName())(x.tree, q"scalaz.Applicative[Option]", monadic = false)
     if (!result.isDefined) c.warning(c.enclosingPosition, "IdiomBracket merely lifted expression, there is a probably a better more explicit way of achieving the same result")
     c.Expr[Option[Option[T]]](result.getOrElse(q"Some(Some($x.tree))"))
   }
@@ -188,7 +197,7 @@ object IdiomBracket {
     * @param tree Tree to transform
     * @return Some(Tree) if the tree was transformed or none if it was not transformed
     */
-  def transformAST(u: scala.reflect.api.Universe, freshName: () => String)(tree: u.Tree, applicativeInstance: u.Tree): Option[u.Tree] = {
+  def transformAST(u: scala.reflect.api.Universe, freshName: () => String)(tree: u.Tree, applicativeInstance: u.Tree, monadic: Boolean): Option[u.Tree] = {
     import u._
     def transformR(tree: u.Tree): (u.Tree, Int) = tree match {
       case fun: Apply if isExtractFunction(fun) => (fun.args(0), 1)
@@ -256,8 +265,14 @@ object IdiomBracket {
         val function = createFunction(q"$lhsName match { case ..$tCases}", lhsName :: names.flatten)
         (q"$applicativeInstance.$applyTerm(..$allArgs)($function)", 1)
       case If(expr, trueCase, falseCase) =>
-        val cleanParts = cleanArgs(List(expr, trueCase, falseCase))
-        (q"$applicativeInstance.apply3(..$cleanParts)(if(_) _ else _)", 1)
+        if (!monadic) {
+          val cleanParts = cleanArgs(List(expr, trueCase, falseCase))
+          (q"$applicativeInstance.apply3(..$cleanParts)(if(_) _ else _)", 1)
+        }
+        else {
+          val List(exprT, trueCaseT, falseCaseT) = cleanArgs(List(expr, trueCase, falseCase))
+          (q"$applicativeInstance.bind($exprT)(if(_) $trueCaseT else $falseCaseT)", 1)
+        }
       case _ => (tree, 0)
     }
 
