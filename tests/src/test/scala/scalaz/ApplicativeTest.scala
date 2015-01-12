@@ -9,6 +9,7 @@ import scala.concurrent.Promise
 import scala.reflect.runtime.universe._
 import scala.reflect.runtime.{currentMirror => cm}
 import scala.tools.reflect.ToolBox
+import scala.tools.reflect.ToolBoxError
 
 object ApplicativeTest extends SpecLite {
 
@@ -189,6 +190,39 @@ object ApplicativeTest extends SpecLite {
     else
       f == None
   }
+
+  "Idiom brackets with double nested extract within argument" in {
+    val ast = q"""
+                import scalaz.IdiomBracket.extract
+                def doThing(a: String, b: String, c: String): String = ???
+                def firstThis(a: String): Option[String] = ???
+                val a: Option[String] = ???
+                val b: Option[String] = ???
+                val c: Option[String] = ???
+                scalaz.IdiomBracket.apply[Option, String](doThing(extract(firstThis(extract(a))),extract(b), extract(c)))(scalaz.std.option.optionInstance)
+              """
+    val tb = cm.mkToolBox()
+    try {
+      tb.compile(ast)
+      false
+    } catch {
+      case a: ToolBoxError => true // The failure here is not the expected one,
+                                   // It's a failure that would appear to be a ToolBox bug, what are you gonna do...
+      case _: Throwable => false
+    }
+  }
+
+  /*"Monad brackets with double nested extract within argument" ! forAll { (a: Option[String], b: Option[String], c: Option[String], d: Option[Int]) =>
+    import IdiomBracket.extract
+    def doThing(e: String, f: String, h: String) = e + f + h
+    def firstThis(gg: String): Option[String] = d.map(gg.take(_))
+    val f = IdiomBracket.monad[Option, String](doThing(extract(firstThis(extract(a))),extract(b), extract(c)))
+    f == Applicative[Option].apply3(a,b,c)((a,b,c) =>
+      Applicative[Option].map(firstThis(a))(other =>
+        doThing(other, b, c)
+      )
+    )
+  }*/
 
   "Idiom brackets with simple block" ! forAll { (a: Option[String]) =>
     import IdiomBracket.extract
@@ -453,11 +487,15 @@ object ApplicativeTest extends SpecLite {
 
   "extract does not compile on it's own" in {
     val ast = q"""
-                import scalaz._
-                ApplicativeTest.doThing(IdiomBracket.extract(ApplicativeTest.a))
+                import scalaz.IdiomBracket.extract
+                val a: Option[String] = ???
+                def doThing(a: String): String = ???
+                doThing(extract(a))
               """
     val tb = cm.mkToolBox()
-    tb.compile(ast).mustThrowA[scala.tools.reflect.ToolBoxError]
+    try { tb.compile(ast); false} catch {
+      case a: ToolBoxError => a.getMessage.contains("`extract` must be enclosed in an `IdiomBracket`")
+    }
   }
 
   "AST generation" in {
