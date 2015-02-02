@@ -127,8 +127,11 @@ object Applicative {
 }
 
 object IdiomBracket {
+
+  val merelyLiftedMsg = "IdiomBracket merely lifted expression, there is a probably a better more explicit way of achieving the same result"
+
   def apply[F[_]: Applicative,T](x: T): F[T] = macro idiomBracket[T,F]
-  def apply2[T](x: T): Option[Option[T]] = macro idiomBracket2[T]
+  //def apply2[T](x: T): Option[Option[T]] = macro idiomBracket2[T]
   def monad[F[_]: Monad,T](x: T): F[T] = macro idiomBracketMonad[T,F]
 
   def control(x: String): Option[String] = macro controlImpl
@@ -157,16 +160,16 @@ object IdiomBracket {
   def idiomBracket[T: c.WeakTypeTag, F[_]](c: Context)(x: c.Expr[T])(ap: c.Expr[Applicative[F]]): c.Expr[F[T]] = {
     import c.universe._
     val applicativeInstance = ap.tree
-    val result = transformAST(c.universe, () => c.freshName())(x.tree, applicativeInstance, monadic = false)
-    if (!result.isDefined) c.warning(c.enclosingPosition, "IdiomBracket merely lifted expression, there is a probably a better more explicit way of achieving the same result")
+    val result = transformAST(c.universe)(ContextSubset(c),x.tree, applicativeInstance, monadic = false)
+    if (!result.isDefined) c.warning(c.enclosingPosition,merelyLiftedMsg)
     c.Expr[F[T]](result.getOrElse(q"$applicativeInstance.pure(${x.tree})"))
   }
 
   def idiomBracketMonad[T, F[_]](c: Context)(x: c.Expr[T])(m: c.Expr[Monad[F]]): c.Expr[F[T]] = {
     import c.universe._
     val monadInstance = m.tree
-    val result = transformAST(c.universe, () => c.freshName())(x.tree, monadInstance, monadic = true)
-    if (!result.isDefined) c.warning(c.enclosingPosition, "IdiomBracket merely lifted expression, there is a probably a better more explicit way of achieving the same result")
+    val result = transformAST(c.universe)(ContextSubset(c),x.tree, monadInstance, monadic = true)
+    if (!result.isDefined) c.warning(c.enclosingPosition, merelyLiftedMsg)
     c.Expr[F[T]](result.getOrElse(q"$monadInstance.pure(${x.tree})"))
   }
 
@@ -184,40 +187,54 @@ object IdiomBracket {
     c.Expr[Option[String]](c.untypecheck(result))
   }
 
-  def idiomBracket2[T: c.WeakTypeTag](c: Context)(x: c.Expr[T]): c.Expr[Option[Option[T]]] = {
+  /*def idiomBracket2[T: c.WeakTypeTag](c: Context)(x: c.Expr[T]): c.Expr[Option[Option[T]]] = {
     import c.universe._
-    val result = transformAST(c.universe, () => c.freshName())(x.tree, q"scalaz.Applicative[Option]", monadic = false)
-    if (!result.isDefined) c.warning(c.enclosingPosition, "IdiomBracket merely lifted expression, there is a probably a better more explicit way of achieving the same result")
+    val result = transformAST(c.universe, c)(x.tree, q"scalaz.Applicative[Option]", monadic = false)
+    if (!result.isDefined) c.warning(c.enclosingPosition, merelyLiftedMsg)
     c.Expr[Option[Option[T]]](result.getOrElse(q"Some(Some($x.tree))"))
+  }*/
+
+  trait ContextSubset[U <: scala.reflect.api.Universe] {
+    def freshName(): String
+    def abort(pos: U#Position, msg: String): Nothing
+    def enclosingPosition: U#Position
+  }
+
+  object ContextSubset {
+    def apply(c: Context) = new ContextSubset[c.universe.type] {
+      def freshName(): String = c.freshName()
+      def abort(pos: c.Position, msg: String): Nothing = c.abort(pos, msg)
+      def enclosingPosition: c.Position = c.enclosingPosition
+    }
   }
 
   /**
     *
     * @param u The universe of the Trees. Required to operate under current Scala reflection architecture. Trees cannot
     *          exist without a universe.
-    * @param freshName Function that generates fresh names for use in the AST transformation
+    * @param c Context to use. Typically supplied by the macro definition
     * @param tree Tree to transform
     * @return Some(Tree) if the tree was transformed or none if it was not transformed
     */
-  def transformAST(u: scala.reflect.api.Universe, freshName: () => String)(tree: u.Tree, applicativeInstance: u.Tree, monadic: Boolean): Option[u.Tree] = {
+  def transformAST(u: scala.reflect.api.Universe)(c: ContextSubset[u.type], tree: u.Tree, applicativeInstance: u.Tree, monadic: Boolean): Option[u.Tree] = {
     import u._
     def transformR(tree: u.Tree): (u.Tree, Int) = tree match {
       case fun: Apply if isExtractFunction(fun) => (fun.args(0), 1)
       case Apply(ref, args) =>
         val (ref1, args1) = if (!extractsArePresent(ref)) {
           ref match {
-            case Select(exprRef, methodName) => (createMethodWithLHS(methodName, exprRef, args.size, freshName), args)
+            case Select(exprRef, methodName) => (createMethodWithLHS(methodName, exprRef, args.size), args)
             case _ => (ref, args)
           }
         } else {
           val Select(exprRef, methodName) = ref
-          (createMethod(methodName, args.size, freshName), exprRef :: args)
+          (createMethod(methodName, args.size), exprRef :: args)
         }
         val liftedArgs = args1.map(lift(_))
         val applyTerm = getApplyTerm(liftedArgs.length)
         if (liftedArgs.forall(!isExtractFunction(_))) (q"$applicativeInstance.$applyTerm(..$liftedArgs)($ref1)", 1)
         else {
-          val names: List[u.TermName] = List.fill(liftedArgs.size)(freshName()).map(TermName(_))
+          val names: List[u.TermName] = List.fill(liftedArgs.size)(c.freshName()).map(TermName(_))
           val transformedArgs = liftedArgs.zip(names).map { case (arg, name) =>
             val ident = Ident(name)
             if (extractsArePresent(arg)) ident
@@ -258,7 +275,7 @@ object IdiomBracket {
             else (x1, (Nil))
           val (newX2, argsWithWhatTheyReplace2) =
             if (extractsArePresent(x2)) {
-              val paramName = TermName(freshName())
+              val paramName = TermName(c.freshName())
               (Ident(paramName), (List(paramName,x2)))
             }
             else (x2, (Nil))
@@ -267,7 +284,7 @@ object IdiomBracket {
         val (names, args) = argsWithWhatTheyReplace.flatten.unzip
         val allArgs = (expr :: args).map(lift(_))
         val applyTerm = getApplyTerm(allArgs.size)
-        val lhsName = TermName(freshName())
+        val lhsName = TermName(c.freshName())
         val function = createFunction(q"$lhsName match { case ..$tCases}", lhsName :: names)
         (q"$applicativeInstance.$applyTerm(..$allArgs)($function)", 1)
       case If(expr, trueCase, falseCase) =>
@@ -283,7 +300,8 @@ object IdiomBracket {
     }
 
     def getApplyTerm(arity: Int) = {
-      assert(arity <= 12, "scalaz does not define an apply13 or more which is necessary of our rewrite to work. Reformat your code to avoid functions receiving more than 12 parameters.")
+      if (arity > 12)
+        c.abort(c.enclosingPosition, "scalaz does not define an apply13 or more which is necessary of our rewrite to work. Reformat your code to avoid functions receiving more than 12 parameters.")
       val applyFunName = if (arity == 1) "map"
       else s"apply$arity"
       TermName(applyFunName)
@@ -294,16 +312,16 @@ object IdiomBracket {
       Function(lhs, rhs)
     }
 
-    def createMethod(methodName: u.Name, nArgs: Int, freshName: () => String) = {
-      val names = List.fill(nArgs + 1)(freshName())
+    def createMethod(methodName: u.Name, nArgs: Int) = {
+      val names = List.fill(nArgs + 1)(c.freshName())
       val lhs = names.map( name => ValDef(Modifiers(Flag.PARAM | Flag.SYNTHETIC), TermName(name), TypeTree(), EmptyTree))
       val args = names.map(name => Ident(TermName(name)))
       val rhs = Apply(Select(args.head, methodName), args.tail)
       Function(lhs, rhs)
     }
 
-    def createMethodWithLHS(methodName: u.Name, select: u.Tree, nArgs: Int, freshName: () => String) = {
-      val names = List.fill(nArgs)(freshName())
+    def createMethodWithLHS(methodName: u.Name, select: u.Tree, nArgs: Int) = {
+      val names = List.fill(nArgs)(c.freshName())
       val lhs = names.map( name => ValDef(Modifiers(Flag.PARAM | Flag.SYNTHETIC), TermName(name), TypeTree(), EmptyTree))
       val args = names.map(name => Ident(TermName(name)))
       val rhs = Apply(Select(select, methodName), args)
@@ -315,7 +333,7 @@ object IdiomBracket {
       object ReplaceExtract extends Transformer {
         override def transform(tree: u.Tree): u.Tree = tree match {
           case fun: Apply if isExtractFunction(fun) =>
-            val name = TermName(freshName())
+            val name = TermName(c.freshName())
             namesWithReplaced += ((name, fun))
             q"`$name`"
           case _ => super.transform(tree)
@@ -372,7 +390,10 @@ object IdiomBracket {
      * @return New expression that has been lifted
      */
     def lift(expr: u.Tree): u.Tree = expr match {
-      case extract: Apply if isExtractFunction(extract) => extract.args(0)
+      case extract: Apply if isExtractFunction(extract) =>
+        val extracted = extract.args(0)
+        if (extractsArePresent(extracted)) c.abort(c.enclosingPosition, "It is not possible to lift nested extracts")
+        extracted
       case normal => {
         val (newArg, transformArity) = transformR(normal)
         // If the argument has not undergone a transformation, then lift the computation in order
