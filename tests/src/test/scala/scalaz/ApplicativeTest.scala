@@ -72,7 +72,7 @@ object ApplicativeTest extends SpecLite {
     val tb = cm.mkToolBox()
     val lastLines = tb.typecheck(ast).children.takeRight(nbLines)
     val testAST = if(nbLines == 1)lastLines.head else Block(lastLines.init, lastLines.last)
-    tb.untypecheck(IdiomBracket.transformAST(scala.reflect.runtime.universe)(new DefaultContext,testAST, q"App", monadic).get)
+    tb.untypecheck(IdiomBracket.transform(scala.reflect.runtime.universe)(new DefaultContext,testAST, q"App", monadic).get)
   }
 
   "replicateM is the same" ! forAll { (fa: Option[Int]) => forAll(Gen.choose(0, 100)) { n =>
@@ -215,17 +215,49 @@ object ApplicativeTest extends SpecLite {
     }
   }
 
-  /*"Monad brackets with double nested extract within argument" ! forAll { (a: Option[String], b: Option[String], c: Option[String], d: Option[Int]) =>
+  "Monad brackets with double nested extract within argument" ! forAll { (a: Option[String], b: Option[String], c: Option[String], d: Option[Int]) =>
     import IdiomBracket.extract
     def doThing(e: String, f: String, h: String) = e + f + h
     def firstThis(gg: String): Option[String] = d.map(gg.take(_))
     val f = IdiomBracket.monad[Option, String](doThing(extract(firstThis(extract(a))),extract(b), extract(c)))
-    f == Applicative[Option].apply3(a,b,c)((a,b,c) =>
-      Applicative[Option].map(firstThis(a))(other =>
-        doThing(other, b, c)
-      )
-    )
-  }*/
+    f == Applicative[Option].apply3(Monad[Option].bind(a)(firstThis),b,c)(doThing)
+  }
+
+  "Monad brackets with double nested extract within argument 2" ! forAll { (a: Option[String], b: Option[String], c: Option[String], d: Option[Int]) =>
+    import IdiomBracket.extract
+    def doThing(e: String, f: String, h: String) = e + f + h
+    def firstThis(gg: String): Option[String] = d.map(gg.take(_))
+    def other(gg: String): String = gg + "/"
+    val f = IdiomBracket.monad[Option, String](doThing(other(extract(firstThis(extract(a)))),extract(b), extract(c)))
+    f == Applicative[Option].apply3(Applicative[Option].map(Monad[Option].bind(a)(firstThis))(other),b,c)(doThing)
+  }
+
+  "Monad brackets with double nested extract within argument 2.5" ! forAll { (a: Option[String], b: Option[String], c: Option[String], d: Option[Int]) =>
+    import IdiomBracket.extract
+    def doThing(e: String, h: String) = e + h
+    def firstThis(gg: String, hh: String): Option[String] = d.map(gg.take(_))
+    def other(gg: String): String = gg + "/"
+    val f = IdiomBracket.monad[Option, String](doThing(other(extract(firstThis(extract(a), extract(b)))), extract(c)))
+    f == Applicative[Option].apply2(Applicative[Option].map(Monad[Option].bind2(a,b)(firstThis))(other),c)(doThing)
+  }
+
+  "Monad brackets with double nested extract within argument 3" ! forAll { (a: Option[String], b: Option[String], c: Option[String], d: Option[Int]) =>
+    import IdiomBracket.extract
+    def doThing(e: String, f: String, h: String) = e + f + h
+    def firstThis(gg: String): Option[String] = d.map(gg.take(_))
+    def other(gg: Option[String]): String = gg.getOrElse("")
+    val f = IdiomBracket.monad[Option, String](doThing(other(firstThis(extract(a))),extract(b), extract(c)))
+    f == Applicative[Option].apply3(Applicative[Option].map(Applicative[Option].map(a)(firstThis))(other),b,c)(doThing)
+  }
+
+  "Monad brackets with double nested extract within argument 4" ! forAll { (a: Option[String], b: Option[String], c: Option[String], d: Option[Int]) =>
+    import IdiomBracket.extract
+    def doThing(e: String, f: String, h: String) = e + f + h
+    def firstThis(gg: String): Option[String] = d.map(gg.take(_))
+    def other(gg: String): String = gg + "/"
+    val f = IdiomBracket.monad[Option, String]{doThing(other(extract(if (extract(a) == "") Some("a") else None)),extract(b), extract(c))}
+    f == Applicative[Option].apply3(Applicative[Option].map(Monad[Option].bind(a)(f => if (f == "") Some("a") else None))(other),b,c)(doThing)
+  }
 
   "Idiom brackets with simple block" ! forAll { (a: Option[String]) =>
     import IdiomBracket.extract
@@ -445,6 +477,21 @@ object ApplicativeTest extends SpecLite {
 
     Await.result(f, 1.second) == "hello"
   }
+
+  /*"Idiom bracket asc reverse core site" ! forAll {(phone: Option[String], hitCounter: Option[String], locById: Option[String]) =>
+    import IdiomBracket.extract
+
+    def test(a: String, b: String): Option[(String, String)] = Some((a,b))
+    def otherTest(a: String, b: String, c: String): Option[String] = Some(a)
+
+    val result = IdiomBracket[Option, String] {
+      val tuple: (String, String) = extract(test(extract(phone), extract(hitCounter)))
+      extract(otherTest(tuple._2, tuple._1, extract(locById)))
+    }
+    val first = Applicative[Option].apply2(phone, hitCounter)(Monad[Option].bind(test)
+    val expected = Applicative[Option].apply2(fir)
+    result == expected
+  }*/
 
   /*"Idiom bracket match statement with unapply" ! forAll {(a: Option[List[String]]) =>
     import IdiomBracket.extract
@@ -674,6 +721,34 @@ object ApplicativeTest extends SpecLite {
                    """
     compareAndPrintIfDifferent(transformed, expected)
   }
+
+  // This is commented out because there is no obvious way to get them to be "equal" because of
+  // names that are generated by the quasiquote expansions in the implementation.
+  // This is quite anoying.
+  /*"AST generation nested extracts (monadic)" in {
+    val ast = q"""
+                import scalaz.IdiomBracket.auto.extract
+                val a: Option[String] = ???
+                val b: Option[String] = ???
+                val c: Option[String] = ???
+                def doThing(a: String, b: String, c: String) = ???
+                def other(a: String) = ???
+                doThing(other(extract(if (extract(a) == "") Some("a") else None)),extract(b), extract(c))
+              """
+    val transformed = transformLast(ast, monadic = true)
+    val expected = q"""
+                    App.apply3(
+                      App.map(
+                        App.bind(
+                          App.apply2(a, App.pure(""))((x1, x2) => x1 == x2)
+                        )(if (_) Some("a") else None)
+                      )(other),
+                      b,
+                      c
+                    )(doThing)
+                   """
+    compareAndPrintIfDifferent(transformed, expected)
+  }*/
 
   /*"AST generation if statement" in {
     val ast = q"""

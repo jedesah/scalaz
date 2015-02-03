@@ -160,7 +160,7 @@ object IdiomBracket {
   def idiomBracket[T: c.WeakTypeTag, F[_]](c: Context)(x: c.Expr[T])(ap: c.Expr[Applicative[F]]): c.Expr[F[T]] = {
     import c.universe._
     val applicativeInstance = ap.tree
-    val result = transformAST(c.universe)(ContextSubset(c),x.tree, applicativeInstance, monadic = false)
+    val result = transform(c.universe)(ContextSubset(c),x.tree, applicativeInstance, monadic = false)
     if (!result.isDefined) c.warning(c.enclosingPosition,merelyLiftedMsg)
     c.Expr[F[T]](result.getOrElse(q"$applicativeInstance.pure(${x.tree})"))
   }
@@ -168,7 +168,7 @@ object IdiomBracket {
   def idiomBracketMonad[T, F[_]](c: Context)(x: c.Expr[T])(m: c.Expr[Monad[F]]): c.Expr[F[T]] = {
     import c.universe._
     val monadInstance = m.tree
-    val result = transformAST(c.universe)(ContextSubset(c),x.tree, monadInstance, monadic = true)
+    val result = transform(c.universe)(ContextSubset(c),x.tree, monadInstance, monadic = true)
     if (!result.isDefined) c.warning(c.enclosingPosition, merelyLiftedMsg)
     c.Expr[F[T]](result.getOrElse(q"$monadInstance.pure(${x.tree})"))
   }
@@ -216,22 +216,51 @@ object IdiomBracket {
     * @param tree Tree to transform
     * @return Some(Tree) if the tree was transformed or none if it was not transformed
     */
-  def transformAST(u: scala.reflect.api.Universe)(c: ContextSubset[u.type], tree: u.Tree, applicativeInstance: u.Tree, monadic: Boolean): Option[u.Tree] = {
+  def transform(u: scala.reflect.api.Universe)(c: ContextSubset[u.type], ast: u.Tree, applicativeInstance: u.Tree, monadic: Boolean): Option[u.Tree] = {
     import u._
-    def transformR(tree: u.Tree): (u.Tree, Int) = tree match {
-      case fun: Apply if isExtractFunction(fun) => (fun.args(0), 1)
-      case Apply(ref, args) =>
-        val (ref1, args1) = if (!extractsArePresent(ref)) {
-          ref match {
-            case Select(exprRef, methodName) => (createMethodWithLHS(methodName, exprRef, args.size), args)
-            case _ => (ref, args)
-          }
+
+    /**
+     * Lifts the following expression to an Applicative either by removing an extract function (it can be deeply nested)
+     * or by simply adding a call to the pure function of the applicativeInstance if the expression contained no extract
+     * functions.
+     * @param expr Expression to be lifted by an AST transformation
+     * @return New expression that has been lifted
+     */
+    def lift(expr: u.Tree, flatten: Boolean = false): (u.Tree, Int) = expr match {
+      case fun: Apply if isExtractFunction(fun) =>
+        val extracted = fun.args(0)
+        // directly nested extracts: extract(extract(a))
+        if (isExtractFunction(extracted)) c.abort(c.enclosingPosition, "It is not possible to lift directly nested extracts")
+        // indirectly nested extracts: extract(do(extract(a))); this is fine but we need to be monadic
+        if (extractsArePresent(extracted) && !monadic) c.abort(c.enclosingPosition, "It is not possible to lift nested extracts in non monadic context")
+        if (extractsArePresent(extracted) && monadic) {
+          lift(extracted, true)
         } else {
-          val Select(exprRef, methodName) = ref
-          (createMethod(methodName, args.size), exprRef :: args)
+          (extracted, 1)
         }
-        val liftedArgs = args1.map(lift(_))
-        val applyTerm = getApplyTerm(liftedArgs.length)
+      case Apply(ref, args) =>
+        val (ref1, args1) =
+          // There are not extracts in the LHS of this function/method application
+          if (!extractsArePresent(ref)) {
+            ref match {
+              // This is a method invocations and we need to treat it separately because of Scala quirks.
+              // This will make an anonymous function that does not do much
+              // List(1,3).take(3) -> ($1) => List(1,3).take($1)
+              case Select(exprRef, methodName) => (createMethodWithLHS(methodName, exprRef, args.size), args)
+              // It's just a plain old reference to a function, so we can use the reference as is
+              // com.github.jedesah.foo -> com.github.jedesah.foo
+              case _ => (ref, args)
+            }
+            // There is an extract in the LHS of this function/method application
+            // We need to create an anonymous function to transform the LHS into an argument of a plain old function
+            // extract(a).take(4) -> ($1, $2) => $1.take($2), then List(a,4) are arguments we can lift and we will
+            // ultamitely end up with Applicative.apply2(a,Applicative.pure(4))(($1,$2) => $1.take($2))
+          } else {
+            val Select(exprRef, methodName) = ref
+            (createMethod(methodName, args.size), exprRef :: args)
+          }
+        val liftedArgs = args1.map(lift(_)._1)
+        val applyTerm = getApplyTerm(liftedArgs.length, flatten)
         if (liftedArgs.forall(!isExtractFunction(_))) (q"$applicativeInstance.$applyTerm(..$liftedArgs)($ref1)", 1)
         else {
           val names: List[u.TermName] = List.fill(liftedArgs.size)(c.freshName()).map(TermName(_))
@@ -251,7 +280,7 @@ object IdiomBracket {
           expr match {
             // We need to remember the name of the value definition so that we can add extract methods later so that the right thing happens
             case ValDef(mods, name, tpt, rhs) =>
-              val (tRHS, transformArity) = transformR(addExtractR(rhs, names))
+              val (tRHS, transformArity) = lift(addExtractR(rhs, names))
               arityLastTransform = transformArity
               (names + (name.toString -> transformArity), exprs :+ ValDef(mods, name, TypeTree(), tRHS))
             // If it's just an identifier, let's leave it as is but reconstruct it so that it looses it's type.
@@ -260,7 +289,7 @@ object IdiomBracket {
               (names, exprs :+ Ident(TermName(ident.name.toString)))
             // Anything else, we need to add extracts to identifiers of transformed `ValDef`s because we lifted the type of the symbol they refer to.
             case _ =>
-              val (transformed, transformArity) = transformR(addExtractR(expr, names))
+              val (transformed, transformArity) = lift(addExtractR(expr, names))
               arityLastTransform = transformArity
               (names, exprs :+ transformed)
           }
@@ -282,28 +311,33 @@ object IdiomBracket {
           (cq"$newX1 => $newX2", argsWithWhatTheyReplace1 ++ argsWithWhatTheyReplace2)
         }.unzip
         val (names, args) = argsWithWhatTheyReplace.flatten.unzip
-        val allArgs = (expr :: args).map(lift(_))
+        val allArgs = (expr :: args).map(lift(_)._1)
         val applyTerm = getApplyTerm(allArgs.size)
         val lhsName = TermName(c.freshName())
         val function = createFunction(q"$lhsName match { case ..$tCases}", lhsName :: names)
         (q"$applicativeInstance.$applyTerm(..$allArgs)($function)", 1)
       case If(expr, trueCase, falseCase) =>
         if (!monadic) {
-          val liftedParts = List(expr, trueCase, falseCase).map(lift(_))
+          val liftedParts = List(expr, trueCase, falseCase).map(lift(_)._1)
           (q"$applicativeInstance.apply3(..$liftedParts)(if(_) _ else _)", 1)
         }
         else {
-          val List(exprT, trueCaseT, falseCaseT) = List(expr, trueCase, falseCase).map(lift(_))
+          val List(exprT, trueCaseT, falseCaseT) =
+            if (flatten) List(lift(expr)._1, trueCase, falseCase)
+            else List(expr, trueCase, falseCase).map(lift(_)._1)
           (q"$applicativeInstance.bind($exprT)(if(_) $trueCaseT else $falseCaseT)", 1)
         }
-      case _ => (tree, 0)
+      case _ => (q"$applicativeInstance.pure($expr)", 0)
     }
 
-    def getApplyTerm(arity: Int) = {
+    def getApplyTerm(arity: Int, flatten: Boolean = false) = {
       if (arity > 12)
         c.abort(c.enclosingPosition, "scalaz does not define an apply13 or more which is necessary of our rewrite to work. Reformat your code to avoid functions receiving more than 12 parameters.")
-      val applyFunName = if (arity == 1) "map"
-      else s"apply$arity"
+      val applyFunName =
+        if (flatten)
+            if (arity == 1) s"bind" else s"bind$arity"
+        else
+        if (arity == 1) "map" else s"apply$arity"
       TermName(applyFunName)
     }
 
@@ -382,30 +416,7 @@ object IdiomBracket {
       }
     }
 
-    /**
-     * Lifts the following expression to an Applicative either by removing an extract function (it can be deeply nested)
-     * or by simply adding a call to the pure function of the applicativeInstance if the expression contained no extract
-     * functions.
-     * @param expr Expression to be lifted
-     * @return New expression that has been lifted
-     */
-    def lift(expr: u.Tree): u.Tree = expr match {
-      case extract: Apply if isExtractFunction(extract) =>
-        val extracted = extract.args(0)
-        if (extractsArePresent(extracted)) c.abort(c.enclosingPosition, "It is not possible to lift nested extracts")
-        extracted
-      case normal => {
-        val (newArg, transformArity) = transformR(normal)
-        // If the argument has not undergone a transformation, then lift the computation in order
-        // to fit into the new AST
-        if (transformArity == 0) q"$applicativeInstance.pure($normal)"
-        // If it has been transformed than it has already been lifter in sort
-        // because of the transformation required to remove the extract
-        else newArg
-      }
-    }
-
-    val (result, transformArity) = transformR(tree)
+    val (result, transformArity) = lift(ast)
     if (transformArity == 0) None else Some(result)
   }
 }

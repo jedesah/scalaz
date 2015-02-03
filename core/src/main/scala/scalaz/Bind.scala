@@ -15,6 +15,9 @@ trait Bind[F[_]] extends Apply[F] { self =>
   /** Equivalent to `join(map(fa)(f))`. */
   def bind[A, B](fa: F[A])(f: A => F[B]): F[B]
 
+  def bind2[A, B, C](fa: F[A], fb: F[B])(f: (A,B) => F[C]): F[C] =
+    bind(tuple2(fa,fb)){ case (a,b) => f(a,b)}
+
   override def ap[A, B](fa: => F[A])(f: => F[A => B]): F[B] = {
     lazy val fa0 = fa
     bind(f)(map(fa0))
